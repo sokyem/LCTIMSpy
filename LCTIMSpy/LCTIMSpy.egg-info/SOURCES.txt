@@ -1,0 +1,8 @@
+LICENSE
+README.md
+setup.py
+LCTIMSpy.egg-info/PKG-INFO
+LCTIMSpy.egg-info/SOURCES.txt
+LCTIMSpy.egg-info/dependency_links.txt
+LCTIMSpy.egg-info/requires.txt
+LCTIMSpy.egg-info/top_level.txt
