@@ -4,27 +4,13 @@ Description: Functions for analyzing TIMSTOF data, pyTDFSDK installation is requ
 """
 
 import os
-import re
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from pyTDFSDK import *
 from pyTDFSDK.init_tdf_sdk import init_tdf_sdk_api
 from pyTDFSDK.ctypes_data_structures import PressureCompensationStrategy
 from pyTDFSDK.classes import TdfData
 
-
-# Attempt to import Annotator from statannot or statannotations.
-try:
-    from statannot import Annotator
-except ImportError:
-    try:
-        from statannotations.Annotator import Annotator
-    except ImportError:
-        raise ImportError("Annotator could not be imported from 'statannot' or 'statannotations'. "
-                          "Please install one of these packages.")
-
-pio.renderers.default = 'notebook'
 #initilaize bruker library 
 dll = init_tdf_sdk_api()
 
