@@ -7,6 +7,8 @@ from scipy.signal import savgol_filter
 import plotly.io as pio
 import plotly.graph_objects as go
 import plotly.express as px
+from .lctims import *
+pio.renderers.default = "browser"
 
 def _set_axis_ticks(ax, major_ticks, minor_ticks):
     """
@@ -26,6 +28,33 @@ def _set_axis_ticks(ax, major_ticks, minor_ticks):
         ax.xaxis.set_major_locator(MultipleLocator(major_ticks))
     if minor_ticks:
         ax.xaxis.set_minor_locator(MultipleLocator(minor_ticks))
+
+def _apply_smoothing(intensity_series, smooth_method, smooth_points):
+    if smooth_method == 'savgol':
+        # Ensure the window length is at least 3
+        win_len = max(smooth_points, 3)
+        # Ensure the window length is odd; if even, decrement by 1
+        if win_len % 2 == 0:
+            win_len -= 1
+
+        n_points = len(intensity_series)
+        if n_points < win_len:
+            # If there are not enough points, adjust win_len to be the maximum odd number <= n_points
+            adjusted_win_len = n_points if n_points % 2 == 1 else n_points - 1
+            if adjusted_win_len < 3:
+                # Not enough points to apply smoothing reliably; return original values
+                return intensity_series.values
+            else:
+                win_len = adjusted_win_len
+
+        try:
+            return savgol_filter(intensity_series.values, window_length=win_len, polyorder=2)
+        except Exception as e:
+            print(f"Error applying Savitzky-Golay filter: {e}")
+            return intensity_series.values
+    else:
+        return intensity_series.values
+
 
 
 def plot_chromatograms(df, target_mzs, mz_tolerance=0.05, overlay=True, retention_time_range=None,
@@ -142,62 +171,48 @@ def plot_chromatograms(df, target_mzs, mz_tolerance=0.05, overlay=True, retentio
         return figs
 
 
-def plot_interactive_chromatograms(df, target_mzs, rt_ranges, mz_tolerance=0.1, 
-                                   apply_smoothing=False, sigma=1, 
-                                   normalize=True, normalize_range=(0, 1),
-                                   overlay=False, save_plots=False, save_directory="plots",
-                                   baseline_correction=True,
-                                   major_ticks=None, minor_ticks=None,
-                                   max_points=None):
+def plot_interactive_chromatograms(df, target_mzs, mz_tolerance=0.05, overlay=True, 
+                                   retention_time_range=None, smooth_method=None, smooth_points=5):
     """
-    Extract and create interactive Plotly chromatograms (EICs) for specified target m/z values.
+    Extracts and plots interactive chromatograms (EICs) for specified target m/z values using Plotly.
     
-    This function uses WebGL (Scattergl) for performance and allows zooming, panning, and hovering.
-    It scales the y-values (e.g. dividing by a power of ten) so that tick labels are in a readable format.
-    Optionally, intensities are normalized per retention time range, and the first and last points are forced to zero.
-    Downsampling can be applied if the number of points exceeds max_points.
+    The function creates interactive line plots that allow zooming, panning, and hovering.
+    It uses the actual DataFrame name (via the 'name' attribute) in the title and legend.
+    Additionally, it scales the y-values so that the ticks are displayed in a more readable format.
+    For example, if the maximum intensity is 1e6, all intensities are divided by 1e6 so that 500000 is
+    shown as 0.5, 1000000 as 1.0, etc.
     
     Parameters
     ----------
     df : pd.DataFrame, list of pd.DataFrame, or dict
-        DataFrame(s) with columns: 'retention_time', 'mz', 'intensity', 'mobility'.
-        If a dict is provided, its keys are used as dataset names.
+        Input DataFrame(s) containing columns: 'frame', 'polarity', 'retention_time', 'mz', 
+        'intensity', and 'mobility'. If a dict is provided, its keys will be used as the dataset names.
     target_mzs : float or list of float
-        Target m/z value(s).
-    rt_ranges : list of tuple
-        Retention time ranges as (rt_min, rt_max).
+        A single target m/z or a list of target m/z values.
     mz_tolerance : float, optional
-        m/z matching tolerance (default: 0.1).
-    apply_smoothing : bool, optional
-        If True, apply Gaussian smoothing (default: False).
-    sigma : float, optional
-        Standard deviation for smoothing (default: 1).
-    normalize : bool, optional
-        If True, normalize intensities within each RT range to normalize_range.
-    normalize_range : tuple, optional
-        Desired range for normalization (default: (0, 1)).
+        Tolerance for m/z matching (default is 0.05).
     overlay : bool, optional
-        If True, create one interactive figure per dataset with all target traces overlaid;
-        if False, create separate figures per target m/z.
-    save_plots : bool, optional
-        If True, save figures as HTML files.
-    save_directory : str, optional
-        Directory to save HTML files if save_plots is True.
-    baseline_correction : bool, optional
-        If True, subtract the minimum intensity in each RT range and force first and last points to zero.
-    major_ticks : float or None, optional
-        Spacing for major x-axis ticks.
-    minor_ticks : float or None, optional
-        Spacing for minor x-axis ticks.
-    max_points : int or None, optional
-        Maximum points per trace; if exceeded, downsample by taking every nth point.
-
+        If True, for each dataset, overlay all target chromatograms in a single figure;
+        if False, create separate figures for each target m/z.
+    retention_time_range : tuple or None, optional
+        A tuple (rt_min, rt_max) to restrict the plotted retention times.
+    smooth_method : str or None, optional
+        Smoothing method ('gaussian' or 'savgol'). If None, no smoothing is applied.
+    smooth_points : int, optional
+        Number of points (or sigma value) for smoothing (default is 5).
+    
     Returns
     -------
-    go.Figure or list of go.Figure or dict
-        In overlay mode, returns one figure per dataset (or a single figure if only one dataset is provided).
-        Otherwise, returns separate figures for each target m/z.
+    plotly.graph_objects.Figure or list of plotly.graph_objects.Figure or dict
+        In overlay mode, a single figure is returned if only one dataset is provided,
+        otherwise a list of figures (one per dataset). In non-overlay mode, a dictionary of figures
+        keyed by target m/z is returned.
     """
+    import plotly.graph_objects as go
+    import pandas as pd
+    import numpy as np
+
+    # If df is a dict, convert it to a list of DataFrames and set each DataFrame's name.
     if isinstance(df, dict):
         dfs = []
         for key, value in df.items():
@@ -208,48 +223,38 @@ def plot_interactive_chromatograms(df, target_mzs, rt_ranges, mz_tolerance=0.1,
     else:
         dfs = df
 
-    if not isinstance(target_mzs, (list, tuple, np.ndarray)):
-        target_mzs = [target_mzs]
-
-    if save_plots and not os.path.exists(save_directory):
-        os.makedirs(save_directory, exist_ok=True)
-
-    def downsample_data(df_subset, max_points):
-        if max_points is not None and len(df_subset) > max_points:
-            step = max(1, len(df_subset) // max_points)
-            return df_subset.iloc[::step]
-        return df_subset
-
-    figures = []
     if overlay:
+        figures = []
+        # Create one figure per dataset.
         for d in dfs:
             fig = go.Figure()
             chrom_df = extract_chromatograms(d, target_mzs, mz_tolerance)
-            if rt_ranges is not None:
-                rt_min, rt_max = rt_ranges
+            if retention_time_range is not None:
+                rt_min, rt_max = retention_time_range
                 chrom_df = chrom_df[(chrom_df['retention_time'] >= rt_min) &
                                     (chrom_df['retention_time'] <= rt_max)]
             dataset_name = getattr(d, 'name', "")
             trace_y_values = []
+            # Group by target m/z (each trace in this figure corresponds to a target m/z).
             for target, group in chrom_df.groupby('target_mz'):
                 group = group.sort_values('retention_time')
                 y_data = _apply_smoothing(group['intensity'], smooth_method, smooth_points)
                 trace_y_values.append(np.array(y_data))
+                # Since this figure is for one dataset, we list only the target m/z in the legend.
                 trace_name = f"target m/z: {target}"
-                fig.add_trace(go.Scattergl(
+                fig.add_trace(go.Scatter(
                     x=group['retention_time'],
-                    y=y_data,
+                    y=y_data,  # will be scaled later
                     mode='lines',
                     name=trace_name,
                     hovertemplate='Retention Time: %{x}<br>Intensity: %{y}<extra></extra>'
                 ))
-            if trace_y_values:
-                global_max = max(np.max(arr) for arr in trace_y_values if arr.size > 0)
-            else:
-                global_max = 1
+            # Compute the global maximum for this dataset.
+            global_max = max(np.max(arr) for arr in trace_y_values if arr.size > 0)
             scale_factor = 1
             if global_max > 0:
                 scale_factor = 10 ** int(np.floor(np.log10(global_max)))
+            # Update each trace's y values with the scaled data.
             for i, y_vals in enumerate(trace_y_values):
                 scaled = y_vals / scale_factor
                 fig.data[i].y = scaled
@@ -262,71 +267,23 @@ def plot_interactive_chromatograms(df, target_mzs, rt_ranges, mz_tolerance=0.1,
                 paper_bgcolor="white",
                 plot_bgcolor="white",
                 hovermode="closest",
-                xaxis=dict(showline=True, linewidth=2, linecolor='black', tickfont=dict(color='black')),
-                yaxis=dict(showline=True, linewidth=2, linecolor='black', tickfont=dict(color='black'), tickformat=".1f")
-            )
-            if major_ticks is not None:
-                fig.update_xaxes(dtick=major_ticks)
-            if minor_ticks is not None:
-                fig.update_xaxes(minor=dict(dtick=minor_ticks, showgrid=True))
-            if save_plots:
-                save_path = os.path.join(save_directory, f"{dataset_name}_overlayed_mobilograms.html")
-                fig.write_html(save_path)
-            fig.show()
-            figures.append(fig)
-        return figures if len(figures) > 1 else figures[0]
-    else:
-        figs = {}
-        color_sequence = px.colors.qualitative.Plotly
-        unique_rt_ranges = sorted([f"{start}-{end}" for start, end in rt_ranges])
-        rt_colors = {rt: color_sequence[i % len(color_sequence)] for i, rt in enumerate(unique_rt_ranges)}
-        for d in dfs:
-            dataset_name = getattr(d, 'name', "")
-            chrom_df = extract_chromatograms(d, target_mzs, mz_tolerance)
-            if rt_ranges is not None:
-                rt_min, rt_max = rt_ranges
-                chrom_df = chrom_df[(chrom_df['retention_time'] >= rt_min) &
-                                    (chrom_df['retention_time'] <= rt_max)]
-            for target in chrom_df['target_mz'].unique():
-                sub_df = chrom_df[chrom_df['target_mz'] == target].sort_values('retention_time')
-                fig = go.Figure()
-                y_data = _apply_smoothing(sub_df['intensity'], smooth_method, smooth_points)
-                y_arr = np.array(y_data)
-                local_max = np.max(y_arr) if y_arr.size > 0 else 1
-                scale_factor = 1
-                if local_max > 0:
-                    scale_factor = 10 ** int(np.floor(np.log10(local_max)))
-                scaled_y = y_arr / scale_factor
-                trace_name = f"target m/z: {target}" if dataset_name == "" else f"{dataset_name} target m/z: {target}"
-                fig.add_trace(go.Scattergl(
-                    x=sub_df['retention_time'],
-                    y=scaled_y,
-                    mode='lines',
-                    name=trace_name,
-                    hovertemplate='Retention Time: %{x}<br>Intensity: %{y}<extra></extra>'
-                ))
-                yaxis_title = "Intensity" if scale_factor == 1 else f"Intensity (×{scale_factor:0.0e})"
-                title_text = f"Chromatogram for {dataset_name} - Target m/z: {target}" if dataset_name else f"Chromatogram for Target m/z: {target}"
-                fig.update_layout(
-                    title=title_text,
-                    xaxis_title="Retention Time",
-                    yaxis_title=yaxis_title,
-                    paper_bgcolor="white",
-                    plot_bgcolor="white",
-                    hovermode="closest",
-                    xaxis=dict(showline=True, linewidth=2, linecolor='black', tickfont=dict(color='black')),
-                    yaxis=dict(showline=True, linewidth=2, linecolor='black', tickfont=dict(color='black'), tickformat=".1f")
+                xaxis=dict(
+                    showline=True,
+                    linewidth=1,
+                    linecolor='black',
+                    tickfont=dict(color='black')
+                ),
+                yaxis=dict(
+                    showline=True,
+                    linewidth=1,
+                    linecolor='black',
+                    tickfont=dict(color='black'),
+                    tickformat=".1f"
                 )
-                if major_ticks is not None:
-                    fig.update_xaxes(dtick=major_ticks)
-                if minor_ticks is not None:
-                    fig.update_xaxes(minor=dict(dtick=minor_ticks, showgrid=True))
-                if save_plots:
-                    save_path = os.path.join(save_directory, f"{dataset_name}_target_{target}_mobilogram.html")
-                    fig.write_html(save_path)
-                fig.show()
-                figs[target] = fig
-        return figs
+            )
+            figures.append(fig)
+            fig.show()
+        return figures 
 
 def normalize_series(x, norm_range):
     """
@@ -349,6 +306,33 @@ def normalize_series(x, norm_range):
         return np.full(x.shape, norm_range[0])
     return (x - x.min()) / (x.max() - x.min()) * (norm_range[1] - norm_range[0]) + norm_range[0]
 
+def _apply_smoothing(intensity_series, smooth_method, smooth_points):
+    if smooth_method == 'savgol':
+        # Ensure the window length is at least 3
+        win_len = max(smooth_points, 3)
+        # Ensure the window length is odd; if even, decrement by 1
+        if win_len % 2 == 0:
+            win_len -= 1
+
+        n_points = len(intensity_series)
+        if n_points < win_len:
+            # If there are not enough points, adjust win_len to be the maximum odd number <= n_points
+            adjusted_win_len = n_points if n_points % 2 == 1 else n_points - 1
+            if adjusted_win_len < 3:
+                # Not enough points to apply smoothing reliably; return original values
+                return intensity_series.values
+            else:
+                win_len = adjusted_win_len
+
+        try:
+            return savgol_filter(intensity_series.values, window_length=win_len, polyorder=2)
+        except Exception as e:
+            print(f"Error applying Savitzky-Golay filter: {e}")
+            return intensity_series.values
+    else:
+        return intensity_series.values
+
+
 
 def plot_mobilogram_target_mz(df, target_mzs, rt_ranges, mz_tolerance=0.1, 
                               apply_smoothing=False, sigma=1, 
@@ -356,7 +340,7 @@ def plot_mobilogram_target_mz(df, target_mzs, rt_ranges, mz_tolerance=0.1,
                               overlay=False, save_plots=False, save_directory="plots",
                               baseline_correction=True):
     """
-    Extract mobilogram data for target m/z values using extract_mobilogram_df and plot mobility vs. intensity.
+    Extract mobilogram data for target m/z values using extract_mobilogram and plot mobility vs. intensity.
     Forces first and last intensity values to zero per RT range (to yield a Gaussian-like baseline).
 
     Parameters
@@ -407,7 +391,7 @@ def plot_mobilogram_target_mz(df, target_mzs, rt_ranges, mz_tolerance=0.1,
         n_targets = len(target_mzs)
         target_colors = {target: cmap(i / max(1, n_targets - 1)) for i, target in enumerate(target_mzs)}
         for target in target_mzs:
-            mob_df = extract_mobilogram_df(
+            mob_df = extract_mobilogram(
                 df, target, rt_ranges, mz_tolerance, apply_smoothing, sigma,
                 baseline_correction=baseline_correction
             )
@@ -451,7 +435,7 @@ def plot_mobilogram_target_mz(df, target_mzs, rt_ranges, mz_tolerance=0.1,
         rt_colors = {rt: cmap(i / max(1, n_ranges - 1)) for i, rt in enumerate(unique_rt_ranges)}
         for target in target_mzs:
             fig, ax = plt.subplots(figsize=(10, 6))
-            mob_df = extract_mobilogram_df(
+            mob_df = extract_mobilogram(
                 df, target, rt_ranges, mz_tolerance, apply_smoothing, sigma,
                 baseline_correction=baseline_correction
             )
@@ -489,6 +473,230 @@ def plot_mobilogram_target_mz(df, target_mzs, rt_ranges, mz_tolerance=0.1,
             plt.show()
             figs.append(fig)
     return figures
+
+def plot_mobilogram_interactive(df, target_mzs, rt_ranges, mz_tolerance=0.05, 
+                                apply_smoothing=False, sigma=1, 
+                                normalize=True, normalize_range=(0, 1),
+                                overlay=False, save_plots=False, save_directory="plots",
+                                baseline_correction=True,
+                                major_ticks=None, minor_ticks=None,
+                                max_points=None):
+    """
+    Extract mobilogram data for one or more target m/z values using the extract_mobilogram function,
+    and create interactive Plotly plots of mobility versus intensity using WebGL (Scattergl) for performance.
+   
+    Parameters
+    ----------
+    df : pd.DataFrame or list of pd.DataFrame
+        Input DataFrame(s) containing columns: 'retention_time', 'mz', 'intensity', and 'mobility'.
+    target_mzs : float or list of float
+        A target m/z value or list of target m/z values.
+    rt_ranges : list of tuple
+        List of (start_rt, end_rt) tuples used in extract_mobilogram.
+    mz_tolerance : float, optional
+        Tolerance for m/z matching (default is 0.1).
+    apply_smoothing : bool, optional
+        If True, apply Gaussian smoothing during mobilogram extraction (default is False).
+    sigma : float, optional
+        Standard deviation for Gaussian smoothing (default is 1).
+    normalize : bool, optional
+        If True, normalize intensities within each RT range to the specified normalize_range.
+    normalize_range : tuple, optional
+        Range to which intensities are normalized (default is (0, 1)).
+    overlay : bool, optional
+        If True, plot all target mobilograms in a single interactive figure; otherwise, create separate figures.
+    save_plots : bool, optional
+        If True, save each figure as an HTML file.
+    save_directory : str, optional
+        Directory in which to save plots if save_plots is True.
+    baseline_correction : bool, optional
+        If True, subtract the minimum intensity from each RT range to set the baseline to zero.
+        In addition, the first and last intensity values in each RT range are forced to zero.
+    major_ticks : float or None, optional
+        Spacing for major ticks on the x-axis. If None, default Plotly settings are used.
+    minor_ticks : float or None, optional
+        Spacing for minor ticks on the x-axis. If None, default Plotly settings are used.
+    max_points : int or None, optional
+        Maximum number of points to plot per trace. If the number of data points exceeds max_points,
+        the data will be downsampled by taking every nth point.
+        
+    Returns
+    -------
+    list of plotly.graph_objects.Figure
+        List of generated interactive Plotly figures.
+    """
+    import os
+    import numpy as np
+    import plotly.graph_objects as go
+    import plotly.express as px
+
+    # Determine the dataset name(s) from the input DataFrame(s)
+    if isinstance(df, list):
+        dataset_names = [getattr(d, 'name', f"Dataset {i+1}") for i, d in enumerate(df)]
+        combined_dataset_name = ", ".join(dataset_names)
+    else:
+        combined_dataset_name = getattr(df, 'name', "Dataset 1")
+    
+    # Ensure target_mzs is a list.
+    if not isinstance(target_mzs, (list, tuple, np.ndarray)):
+        target_mzs = [target_mzs]
+    
+    # Create the save directory if needed.
+    if save_plots and not os.path.exists(save_directory):
+        os.makedirs(save_directory)
+    
+    def downsample_data(df_subset, max_points):
+        """Downsample the dataframe if it has more than max_points rows."""
+        if max_points is not None and len(df_subset) > max_points:
+            step = max(1, len(df_subset) // max_points)
+            return df_subset.iloc[::step]
+        return df_subset
+
+    figures = []
+    
+    if overlay:
+        # Create one interactive Plotly figure with a white background.
+        fig = go.Figure()
+        # Create a color mapping for each target m/z.
+        color_sequence = px.colors.qualitative.Plotly
+        n_targets = len(target_mzs)
+        target_colors = {target: color_sequence[i % len(color_sequence)] for i, target in enumerate(target_mzs)}
+        
+        # Loop over each target m/z.
+        for target in target_mzs:
+            # Extract mobilogram data.
+            mob_df = extract_mobilogram(
+                df, target, rt_ranges, mz_tolerance, apply_smoothing, sigma,
+                baseline_correction=baseline_correction
+            )
+            if mob_df.empty:
+                print(f"No mobilogram data for target m/z {target} in {combined_dataset_name}")
+                continue
+            if normalize:
+                mob_df['normalized_intensity'] = mob_df.groupby('rt_range')['intensity']\
+                                                       .transform(lambda x: normalize_series(x, normalize_range))
+            else:
+                mob_df['normalized_intensity'] = mob_df['intensity']
+            # Loop over each RT range for this target.
+            for rt in sorted(mob_df['rt_range'].unique()):
+                subset = mob_df[mob_df['rt_range'] == rt].sort_values('mobility')
+                if not subset.empty:
+                    # Force first and last intensity values to zero.
+                    subset.loc[subset.index[0], 'normalized_intensity'] = 0
+                    subset.loc[subset.index[-1], 'normalized_intensity'] = 0
+                    # Downsample if necessary.
+                    subset = downsample_data(subset, max_points)
+                    fig.add_trace(
+                        go.Scattergl(
+                            x=subset['mobility'],
+                            y=subset['normalized_intensity'],
+                            mode='lines',
+                            name=f"m/z {target}, RT {rt}",
+                            line=dict(color=target_colors[target])
+                        )
+                    )
+        # Update layout with visible axis lines and tick labels.
+        fig.update_layout(
+            title="Overlayed Mobilograms for " + combined_dataset_name + (" (Normalized)" if normalize else ""),
+            xaxis_title="Mobility",
+            yaxis_title="Normalized Intensity" if normalize else "Intensity",
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            legend_title="Target m/z and RT Range",
+            margin=dict(r=150),
+            xaxis=dict(
+                showline=True,
+                linewidth=2,
+                linecolor='black',
+                tickfont=dict(color='black')
+            ),
+            yaxis=dict(
+                showline=True,
+                linewidth=2,
+                linecolor='black',
+                tickfont=dict(color='black')
+            )
+        )
+        if major_ticks is not None:
+            fig.update_xaxes(dtick=major_ticks)
+        if minor_ticks is not None:
+            fig.update_xaxes(minor=dict(dtick=minor_ticks, showgrid=True))
+            
+        if save_plots:
+            filename = os.path.join(save_directory, "overlayed_mobilograms.html")
+            fig.write_html(filename)
+        fig.show()
+        figures.append(fig)
+        
+    else:
+        # Create separate interactive figures for each target m/z.
+        color_sequence = px.colors.qualitative.Plotly
+        unique_rt_ranges = sorted([f"{start}-{end}" for start, end in rt_ranges])
+        rt_colors = {rt: color_sequence[i % len(color_sequence)] for i, rt in enumerate(unique_rt_ranges)}
+        
+        for target in target_mzs:
+            fig = go.Figure()
+            mob_df = extract_mobilogram(
+                df, target, rt_ranges, mz_tolerance, apply_smoothing, sigma,
+                baseline_correction=baseline_correction
+            )
+            if mob_df.empty:
+                print(f"No mobilogram data for target m/z {target} in {combined_dataset_name}")
+                continue
+            if normalize:
+                mob_df['normalized_intensity'] = mob_df.groupby('rt_range')['intensity']\
+                                                       .transform(lambda x: normalize_series(x, normalize_range))
+            else:
+                mob_df['normalized_intensity'] = mob_df['intensity']
+            for rt in sorted(mob_df['rt_range'].unique()):
+                subset = mob_df[mob_df['rt_range'] == rt].sort_values('mobility')
+                if not subset.empty:
+                    subset.loc[subset.index[0], 'normalized_intensity'] = 0
+                    subset.loc[subset.index[-1], 'normalized_intensity'] = 0
+                    subset = downsample_data(subset, max_points)
+                    fig.add_trace(
+                        go.Scattergl(
+                            x=subset['mobility'],
+                            y=subset['normalized_intensity'],
+                            mode='lines',
+                            name=f"RT {rt}",
+                            line=dict(color=rt_colors[f"{rt}"])
+                        )
+                    )
+            fig.update_layout(
+                title=f"Mobilogram for {combined_dataset_name} - Target m/z: {target}" + (" (Normalized)" if normalize else ""),
+                xaxis_title="Mobility",
+                yaxis_title="Normalized Intensity" if normalize else "Intensity",
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                legend_title="RT Range",
+                margin=dict(r=150),
+                xaxis=dict(
+                    showline=True,
+                    linewidth=2,
+                    linecolor='black',
+                    tickfont=dict(color='black')
+                ),
+                yaxis=dict(
+                    showline=True,
+                    linewidth=2,
+                    linecolor='black',
+                    tickfont=dict(color='black')
+                )
+            )
+            if major_ticks is not None:
+                fig.update_xaxes(dtick=major_ticks)
+            if minor_ticks is not None:
+                fig.update_xaxes(minor=dict(dtick=minor_ticks, showgrid=True))
+                
+            if save_plots:
+                filename = os.path.join(save_directory, f"target_{target}_mobilogram.html")
+                fig.write_html(filename)
+            fig.show()
+            figures.append(fig)
+    
+    return figures
+
 
 def process_mobilogram_plots(lcms_data_dict, target_mzs, rt_ranges, normalize,
                              mz_tolerance=0.02, apply_smoothing=True, sigma=1,
@@ -596,7 +804,7 @@ def process_mobilogram_interactive_plots(lcms_data_dict, target_mzs, rt_ranges, 
     figures = {}
     for key, df in lcms_data_dict.items():
         logging.info(f"Plotting sample: {key}")
-        fig = plot_interactive_chromatograms(
+        fig = plot_mobilogram_interactive(
             df=df,
             target_mzs=target_mzs,
             rt_ranges=rt_ranges,

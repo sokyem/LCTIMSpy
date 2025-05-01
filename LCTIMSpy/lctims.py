@@ -10,6 +10,8 @@ from pyTDFSDK import *
 from pyTDFSDK.init_tdf_sdk import init_tdf_sdk_api
 from pyTDFSDK.ctypes_data_structures import PressureCompensationStrategy
 from pyTDFSDK.classes import TdfData
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import savgol_filter
 
 #initilaize bruker library 
 dll = init_tdf_sdk_api()
@@ -17,6 +19,7 @@ dll = init_tdf_sdk_api()
 #Create a TDF onject from a .d 
 
 def create_tdf_data(path, tdf_sdk, pressure_compensation_strategy, sql_chunksize=500):
+    dll = init_tdf_sdk_api()
     return TdfData(
         bruker_d_folder_name=path,
         tdf_sdk=dll,

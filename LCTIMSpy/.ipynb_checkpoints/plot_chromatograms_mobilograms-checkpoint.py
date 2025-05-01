@@ -7,6 +7,7 @@ from scipy.signal import savgol_filter
 import plotly.io as pio
 import plotly.graph_objects as go
 import plotly.express as px
+from .lctims import *
 
 def _set_axis_ticks(ax, major_ticks, minor_ticks):
     """
@@ -26,6 +27,33 @@ def _set_axis_ticks(ax, major_ticks, minor_ticks):
         ax.xaxis.set_major_locator(MultipleLocator(major_ticks))
     if minor_ticks:
         ax.xaxis.set_minor_locator(MultipleLocator(minor_ticks))
+
+def _apply_smoothing(intensity_series, smooth_method, smooth_points):
+    if smooth_method == 'savgol':
+        # Ensure the window length is at least 3
+        win_len = max(smooth_points, 3)
+        # Ensure the window length is odd; if even, decrement by 1
+        if win_len % 2 == 0:
+            win_len -= 1
+
+        n_points = len(intensity_series)
+        if n_points < win_len:
+            # If there are not enough points, adjust win_len to be the maximum odd number <= n_points
+            adjusted_win_len = n_points if n_points % 2 == 1 else n_points - 1
+            if adjusted_win_len < 3:
+                # Not enough points to apply smoothing reliably; return original values
+                return intensity_series.values
+            else:
+                win_len = adjusted_win_len
+
+        try:
+            return savgol_filter(intensity_series.values, window_length=win_len, polyorder=2)
+        except Exception as e:
+            print(f"Error applying Savitzky-Golay filter: {e}")
+            return intensity_series.values
+    else:
+        return intensity_series.values
+
 
 
 def plot_chromatograms(df, target_mzs, mz_tolerance=0.05, overlay=True, retention_time_range=None,
@@ -142,12 +170,14 @@ def plot_chromatograms(df, target_mzs, mz_tolerance=0.05, overlay=True, retentio
         return figs
 
 
-def plot_interactive_chromatograms(df, target_mzs, rt_ranges, mz_tolerance=0.1, 
+def plot_interactive_chromatograms(df, target_mzs, rt_ranges=None, mz_tolerance=0.1, 
                                    apply_smoothing=False, sigma=1, 
                                    normalize=True, normalize_range=(0, 1),
                                    overlay=False, save_plots=False, save_directory="plots",
                                    baseline_correction=True,
                                    major_ticks=None, minor_ticks=None,
+                                   smooth_method='savgol',
+                                   smooth_points=5,
                                    max_points=None):
     """
     Extract and create interactive Plotly chromatograms (EICs) for specified target m/z values.
@@ -348,6 +378,33 @@ def normalize_series(x, norm_range):
     if x.max() == x.min():
         return np.full(x.shape, norm_range[0])
     return (x - x.min()) / (x.max() - x.min()) * (norm_range[1] - norm_range[0]) + norm_range[0]
+
+def _apply_smoothing(intensity_series, smooth_method, smooth_points):
+    if smooth_method == 'savgol':
+        # Ensure the window length is at least 3
+        win_len = max(smooth_points, 3)
+        # Ensure the window length is odd; if even, decrement by 1
+        if win_len % 2 == 0:
+            win_len -= 1
+
+        n_points = len(intensity_series)
+        if n_points < win_len:
+            # If there are not enough points, adjust win_len to be the maximum odd number <= n_points
+            adjusted_win_len = n_points if n_points % 2 == 1 else n_points - 1
+            if adjusted_win_len < 3:
+                # Not enough points to apply smoothing reliably; return original values
+                return intensity_series.values
+            else:
+                win_len = adjusted_win_len
+
+        try:
+            return savgol_filter(intensity_series.values, window_length=win_len, polyorder=2)
+        except Exception as e:
+            print(f"Error applying Savitzky-Golay filter: {e}")
+            return intensity_series.values
+    else:
+        return intensity_series.values
+
 
 
 def plot_mobilogram_target_mz(df, target_mzs, rt_ranges, mz_tolerance=0.1, 

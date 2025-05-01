@@ -1,10 +1,11 @@
-
+import itertools
+import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import savgol_filter
 from scipy.stats import ttest_ind
 from statsmodels.stats.multitest import multipletests
-from  CID_tims_analysis import extract_mobilograms
-
+from .lctims import *
+ 
 # Attempt to import Annotator from statannot or statannotations.
 try:
     from statannot import Annotator
@@ -54,27 +55,45 @@ def extract_and_calculate_mobility_difference(df, target_mzs, rt_ranges, mz_tole
     rt_range2_str = f"{rt_ranges[1][0]}-{rt_ranges[1][1]}"
     results = []
     for target in target_mzs:
-        mobilogram_df = extract_mobilograms(
+        mobilogram_df = extract_mobilogram(
             df, target, rt_ranges, mz_tolerance, apply_smoothing, sigma,
             baseline_correction=baseline_correction
         )
+        # Select data for each retention time range
         df1 = mobilogram_df[mobilogram_df['rt_range'] == rt_range1_str]
         df2 = mobilogram_df[mobilogram_df['rt_range'] == rt_range2_str]
+        
+        # Drop any rows with NaN values in intensity or mobility
+        df1 = df1.dropna(subset=['intensity', 'mobility'])
+        df2 = df2.dropna(subset=['intensity', 'mobility'])
+        
         if df1.empty or df2.empty:
-            print(f"Warning: No data for target m/z {target} in one or both RT ranges.")
+            print(f"Warning: No valid data for target m/z {target} in one or both RT ranges.")
             continue
+        
+        # Check for intensity threshold per RT range
         if intensity_threshold is not None:
             max_intensity1 = df1['intensity'].max()
             max_intensity2 = df2['intensity'].max()
             if max_intensity1 < intensity_threshold or max_intensity2 < intensity_threshold:
                 print(f"Warning: Target m/z {target} removed due to low max intensity (RT1: {max_intensity1}, RT2: {max_intensity2}).")
                 continue
+        
+        # Check that the sum of intensities is nonzero for both groups
+        if df1['intensity'].sum() == 0 or df2['intensity'].sum() == 0:
+            print(f"Warning: Target m/z {target} removed due to zero total intensity.")
+            continue
+        
+        # Compute the weighted average mobilities
         avg_mobility1 = np.average(df1['mobility'], weights=df1['intensity'])
         avg_mobility2 = np.average(df2['mobility'], weights=df2['intensity'])
         mobility_diff = abs(avg_mobility2 - avg_mobility1)
+        
+        # Determine the peak mobility (mobility at maximum intensity)
         peak_mobility1 = df1.loc[df1['intensity'].idxmax(), 'mobility']
         peak_mobility2 = df2.loc[df2['intensity'].idxmax(), 'mobility']
         peak_mobility_diff = abs(peak_mobility2 - peak_mobility1)
+        
         results.append({
             "target_mz": target,
             "avg_mobility_rt_range1": avg_mobility1,
@@ -85,6 +104,7 @@ def extract_and_calculate_mobility_difference(df, target_mzs, rt_ranges, mz_tole
             "peak_mobility_difference": peak_mobility_diff
         })
     return pd.DataFrame(results)
+
 
 
 def extract_and_calculate_mobility_difference_multi(df_list, target_mzs, rt_ranges, 
