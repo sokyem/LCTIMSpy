@@ -3,6 +3,7 @@
     lctimspy doctor                 check the SDK, dependencies and cache
     lctimspy extract A.d [B.d ...]  extract into the cache (Ctrl-C cancels cleanly)
     lctimspy analyze A.d B.d C.d --peptide SEQ --windows 18.3:19.0 21.5:22.2
+    lctimspy serve [--open]          run the local web server for the GUI
     lctimspy cache list|clear|remove KEY|sweep
 """
 
@@ -289,6 +290,42 @@ def cmd_analyze(args) -> int:
     return 0
 
 
+# ---- serve ------------------------------------------------------------------
+
+def cmd_serve(args) -> int:
+    try:
+        from .server.app import create_app
+        from .server.runner import bind_loopback, make_server, url_for
+        from .server.settings import ServerSettings
+    except ImportError as exc:
+        print(f"error: the server needs extra packages ({exc.name}); "
+              'install with: pip install -e ".[server]"', file=sys.stderr)
+        return 1
+
+    settings = ServerSettings()
+    if args.cache_dir:
+        settings.cache_dir = Path(args.cache_dir)
+    if args.no_token:
+        settings.token = None
+    try:
+        sock = bind_loopback(args.port)
+    except OSError as exc:
+        print(f"error: cannot listen on 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
+        return 1
+    server = make_server(create_app(settings))
+    url = url_for(sock, settings.token)
+    print(f"LCTIMSpy server running at {url}")
+    print(f"API docs: {url_for(sock, None)}api/docs" + ("" if args.no_token else
+          "  (open the URL above first to authenticate)"))
+    print("Press Ctrl-C to stop.", flush=True)   # flush: launchers read the URL from a pipe
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(url)
+    server.run(sockets=[sock])
+    return 0
+
+
 # ---- cache ------------------------------------------------------------------
 
 def cmd_cache(args) -> int:
@@ -361,6 +398,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="must match the extraction (default 0.0005)")
     p.add_argument("--out", default="lctims_results", help="output folder")
     p.set_defaults(func=cmd_analyze)
+
+    p = sub.add_parser("serve", help="run the local web server for the GUI")
+    p.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free)")
+    p.add_argument("--open", action="store_true", help="open the browser")
+    p.add_argument("--no-token", action="store_true",
+                   help="disable the per-run access token (not recommended)")
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("cache", help="inspect or clean the cache")
     csub = p.add_subparsers(dest="cache_cmd", required=True)

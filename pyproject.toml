@@ -40,7 +40,7 @@ lctimspy = "LCTIMSpy.cli:main"
 bruker = ["pyTDFSDK @ git+https://github.com/gtluu/pyTDFSDK.git"]
 server = ["fastapi", "uvicorn[standard]", "pydantic>=2"]
 desktop = ["pywebview"]
-dev = ["ruff", "pytest", "pytest-cov"]
+dev = ["ruff", "pytest", "pytest-cov", "httpx"]
 
 [project.urls]
 Homepage = "https://github.com/sokyem/LCTIMSpy"

@@ -123,3 +123,29 @@ def cache(tmp_path):
 @pytest.fixture(scope="session")
 def fragments():
     return get_fragmentMz
+
+
+class SlowFakeFrameSource(FakeFrameSource):
+    """FakeFrameSource that takes ``delay`` seconds per frame (cancellation tests)."""
+
+    def __init__(self, delay: float = 0.05, **kwargs):
+        super().__init__(**kwargs)
+        self.delay = delay
+
+    def read_frame(self, frame_id: int, num_scans: int):
+        import time
+
+        time.sleep(self.delay)
+        return super().read_frame(frame_id, num_scans)
+
+
+class CrashingFrameSource(FakeFrameSource):
+    """Prints like a chatty native library, then dies the way an access violation does."""
+
+    def read_frame(self, frame_id: int, num_scans: int):
+        if frame_id == 11:
+            import os
+
+            print("timsdata: something went badly wrong", flush=True)
+            os._exit(3)
+        return super().read_frame(frame_id, num_scans)
