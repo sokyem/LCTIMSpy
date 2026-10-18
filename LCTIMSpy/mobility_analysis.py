@@ -1,12 +1,12 @@
-import itertools
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
-from scipy.ndimage import gaussian_filter1d
-from scipy.signal import savgol_filter
 from scipy.stats import ttest_ind
 from statsmodels.stats.multitest import multipletests
-from .lctims import *
- 
+
+from .lctims import extract_mobilogram
+
 # Attempt to import Annotator from statannot or statannotations.
 try:
     from statannot import Annotator

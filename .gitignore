@@ -1,0 +1,23 @@
+# Environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Analysis outputs written to CWD by the plotting functions
+plots/
+
+# OS
+Thumbs.db
+.DS_Store

@@ -23,90 +23,91 @@ pip install git+https://github.com/sokyem/LCTIMSpy.git
 - Extract chromatograms and mobilograms for peptide fragments in a CID-TIMS wrokflow
 - Plot interactive and custom chromatograms and mobilograms 
 - Calculate the difference in mobility for peptides eluting at multiple retention time
-``` Python
+```Python
 from pyTDFSDK.init_tdf_sdk import init_tdf_sdk_api
-from pyTDFSDK import *
-from lctims import *
 from pyTDFSDK.ctypes_data_structures import PressureCompensationStrategy
+from LCTIMSpy import *
+from LCTIMSpy import lctims
 
-#Initialize TDF-SDK library using the packaged .dll or .so files for Windows or Linux.
-
+# Initialize the TDF-SDK library using the packaged .dll or .so file for Windows or Linux.
 dll = init_tdf_sdk_api()
 
-#Single LC-TIMS-Data Processing
-# Initialize TdfData object
+# ---- Single LC-TIMS-MS file ----
+# Initialize a TdfData object from a Bruker .d folder.
+Tdf_obj = lctims.create_tdf_data(
+    path=path_to_bruker_d_folder,
+    tdf_sdk=dll,
+    pressure_compensation_strategy=PressureCompensationStrategy.PerFramePressureCompensation,
+    sql_chunksize=500)
 
-Tdf_obj = create_tdf_data(
-        bruker_d_folder_name=path_to_bruker_d_folder,
-        tdf_sdk=dll,
-        pressure_compensation_strategy=PressureCompensationStrategy.PerFramePressureCompensation,
-        sql_chunksize=500)
-        
-# extract LC-TIMS-MS data from the TDF_object
-
+# Extract LC-TIMS-MS data from the TdfData object.
+chunk_size = 100
 lc_tims_ms_df = extract_lcms_tdf_data(
-        tdf_data=Tdf_obj,
-        mode='profile', profile_bins=0.01,
-        chunk_size=chunk_size, mobility_bin_width=0.0005
-    )
+    tdf_data=Tdf_obj,
+    mode='profile', profile_bins=0.01,
+    chunk_size=chunk_size, mobility_bin_width=0.0005)
 
-#Process multiple .d data 
-# Initialize TdfData objects for each file.
+# ---- Multiple .d files ----
+# paths is a dict mapping each sample id to the path of a Bruker .d folder.
 tdf_data_dict = {
-    sample_id: TdfData(
-        bruker_d_folder_name=path_to_bruker_d_folders,
+    sample_id: lctims.create_tdf_data(
+        path=path,
         tdf_sdk=dll,
         pressure_compensation_strategy=PressureCompensationStrategy.PerFramePressureCompensation,
         sql_chunksize=500
     )
-    for sample_id, path in paths.items() #paths is a dictionary of a directory to bruker .d folder. 
+    for sample_id, path in paths.items()
 }
 
-# Extract LC–MS data from each TdfData object.
+# Extract LC-MS data from each TdfData object.
 lcms_data_dict = {}
 for sample_id, tdf_obj in tdf_data_dict.items():
     lcms_data_dict[sample_id] = extract_lcms_tdf_data(
         tdf_data=tdf_obj,
         mode='profile', profile_bins=0.01,
-        chunk_size=chunk_size, mobility_bin_width=0.0005 #bin mobility based on requirement
+        chunk_size=chunk_size, mobility_bin_width=0.0005  # bin mobility based on requirement
     )
 
-#Ploting and Visualizing
-#plot chromatograms and savefigs 
-plot_chromatograms(df=lc_tims_ms_df, smooth_method='savgol', smooth_points=3,
-                               mz_tolerance= 0.02, major_ticks=2, minor_ticks=0.5,
-                               target_mzs=None, savefig_path=None,
-                               retention_time_range=None)
-#plot interactive chromatograms: allows zooming 
+# ---- Target m/z values from a peptide sequence ----
+# Append "(-0.98)" to the sequence for C-terminal amidation.
+seq = "SPQLEDEAKELQ"
+fragments = calculate_fragment_mz(peptide=seq, charge_states=[1, 2],
+                                  fragments_to_save=["b1+", "b2+", "y1+", "y2+"])
+# calculate_fragment_mz returns a dict keyed by ion series; index one to get a list of m/z.
+target_mzs = fragments["y1+"]
 
-plot_chromatograms(df=lc_tims_ms_df, smooth_method='savgol', smooth_points=3,
-                               mz_tolerance=0.02, major_ticks=2, minor_ticks=0.5,
-                               target_mzs=None,
-                               retention_time_range=None)
+precursors = calculate_precursor_mz(peptide=seq, charge_states=[1, 2])
 
+# ---- Plotting and visualization ----
+# Static chromatograms; pass savefig_path to save the figures instead of displaying them.
+plot_chromatograms(df=lcms_data_dict, target_mzs=target_mzs,
+                   mz_tolerance=0.02, overlay=True,
+                   retention_time_range=(15, 25),
+                   smooth_method='savgol', smooth_points=3,
+                   major_ticks=2, minor_ticks=0.5,
+                   savefig_path=None)
 
-#plot mobilograms for multiple target m/z values at a specified retention time range
-# For example for a CID-TIMS workflow you can process all mobilograms of coeluting fragment ions at different retention time and inspect if there is a difference in mobility for the fragment ions. 
+# Interactive chromatograms: allows zooming, panning and hovering.
+plot_interactive_chromatograms(df=lcms_data_dict, target_mzs=target_mzs,
+                               mz_tolerance=0.02, overlay=True,
+                               retention_time_range=(15, 25),
+                               smooth_method='savgol', smooth_points=3)
 
-process_mobilogram_interactive_plots(lcms_data_dict=lcms_data_dict, 
-                                     target_mzs=fragment_mz, 
-                                     rt_ranges=[(29.8, 30.4), (31.5, 32)],
+# Plot mobilograms for multiple target m/z values over specified retention time ranges.
+# In a CID-TIMS workflow this lets you inspect all coeluting fragment ions at two different
+# retention times and check whether their mobility differs.
+process_mobilogram_interactive_plots(lcms_data_dict=lcms_data_dict,
+                                     target_mzs=target_mzs,
+                                     rt_ranges=[(29.8, 30.4), (31.5, 32.0)],
                                      normalize=True,
-                                     mz_tolerance=0.02, apply_smoothing=True, sigma=0.5, overlay=True)
+                                     mz_tolerance=0.02, apply_smoothing=True,
+                                     sigma=0.5, overlay=True)
 
-# calculate the difference in mobility for a specified m/z value at different retention times
-
-mob_diff_for_mz = extract_and_calculate_mobility_difference(df=lc_tims_ms_df,
-                                          target_mzs=target_mz, 
-                                          rt_ranges=[(29.8, 30.4), (31.5, 32.0)], 
-                                        intensity_threshold=100,
-                                        mz_tolerance=0.02, apply_smoothing=False, sigma=0.5)
-                                        
-
-
-
-
-
-                               
-
-
+# Calculate the difference in mobility for target m/z values eluting at two retention times.
+mob_diff_for_mz = extract_and_calculate_mobility_difference(
+    df=lc_tims_ms_df,
+    target_mzs=target_mzs,
+    rt_ranges=[(29.8, 30.4), (31.5, 32.0)],
+    intensity_threshold=100,
+    mz_tolerance=0.02, apply_smoothing=False, sigma=0.5)
+```

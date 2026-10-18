@@ -1,5 +1,7 @@
 
 from pyteomics import mass
+
+
 def calculate_fragment_mz(peptide, charge_states=[1, 2, 3], fragments_to_save=None):
     """
     Calculate b and y ion series for a peptide with given charge states.

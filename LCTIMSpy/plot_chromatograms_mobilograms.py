@@ -1,13 +1,14 @@
-import numpy as np
-import pandas as pd
+import os
+
 import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy.ndimage import gaussian_filter1d
-from scipy.signal import savgol_filter
-import plotly.io as pio
-import plotly.graph_objects as go
+import numpy as np
 import plotly.express as px
-from .lctims import *
+import plotly.graph_objects as go
+import plotly.io as pio
+from scipy.signal import savgol_filter
+
+from .lctims import extract_chromatograms, extract_mobilogram
+
 pio.renderers.default = "browser"
 
 def _set_axis_ticks(ax, major_ticks, minor_ticks):
@@ -208,8 +209,6 @@ def plot_interactive_chromatograms(df, target_mzs, mz_tolerance=0.05, overlay=Tr
         otherwise a list of figures (one per dataset). In non-overlay mode, a dictionary of figures
         keyed by target m/z is returned.
     """
-    import plotly.graph_objects as go
-    import pandas as pd
     import numpy as np
 
     # If df is a dict, convert it to a list of DataFrames and set each DataFrame's name.
@@ -305,33 +304,6 @@ def normalize_series(x, norm_range):
     if x.max() == x.min():
         return np.full(x.shape, norm_range[0])
     return (x - x.min()) / (x.max() - x.min()) * (norm_range[1] - norm_range[0]) + norm_range[0]
-
-def _apply_smoothing(intensity_series, smooth_method, smooth_points):
-    if smooth_method == 'savgol':
-        # Ensure the window length is at least 3
-        win_len = max(smooth_points, 3)
-        # Ensure the window length is odd; if even, decrement by 1
-        if win_len % 2 == 0:
-            win_len -= 1
-
-        n_points = len(intensity_series)
-        if n_points < win_len:
-            # If there are not enough points, adjust win_len to be the maximum odd number <= n_points
-            adjusted_win_len = n_points if n_points % 2 == 1 else n_points - 1
-            if adjusted_win_len < 3:
-                # Not enough points to apply smoothing reliably; return original values
-                return intensity_series.values
-            else:
-                win_len = adjusted_win_len
-
-        try:
-            return savgol_filter(intensity_series.values, window_length=win_len, polyorder=2)
-        except Exception as e:
-            print(f"Error applying Savitzky-Golay filter: {e}")
-            return intensity_series.values
-    else:
-        return intensity_series.values
-
 
 
 def plot_mobilogram_target_mz(df, target_mzs, rt_ranges, mz_tolerance=0.1, 
@@ -526,9 +498,8 @@ def plot_mobilogram_interactive(df, target_mzs, rt_ranges, mz_tolerance=0.05,
         List of generated interactive Plotly figures.
     """
     import os
+
     import numpy as np
-    import plotly.graph_objects as go
-    import plotly.express as px
 
     # Determine the dataset name(s) from the input DataFrame(s)
     if isinstance(df, list):
@@ -559,7 +530,6 @@ def plot_mobilogram_interactive(df, target_mzs, rt_ranges, mz_tolerance=0.05,
         fig = go.Figure()
         # Create a color mapping for each target m/z.
         color_sequence = px.colors.qualitative.Plotly
-        n_targets = len(target_mzs)
         target_colors = {target: color_sequence[i % len(color_sequence)] for i, target in enumerate(target_mzs)}
         
         # Loop over each target m/z.

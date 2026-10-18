@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "LCTIMSpy"
+version = "0.1.0"
+description = "Processing and analysis of TIMSTOF LC-TIMS-MS data, for identifying isomerized residues in peptides acquired by LC-CID-TIMS"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Samuel Okyem", email = "okyemsamuel@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+# Deliberately does NOT include pyTDFSDK. The Bruker SDK is a native,
+# platform-specific dependency (timsdata.dll / libtimsdata.so, no macOS build),
+# and the package must remain importable and testable without it.
+# Install it with:  pip install -e .[bruker]
+dependencies = [
+    "pandas>=1.0",
+    "numpy>=1.18",
+    "matplotlib>=3.1",
+    "seaborn",
+    "scipy",
+    "plotly",
+    "pyteomics",
+    "statsmodels",
+    "statannotations",
+]
+
+[project.optional-dependencies]
+bruker = ["pyTDFSDK @ git+https://github.com/gtluu/pyTDFSDK.git"]
+server = ["fastapi", "uvicorn[standard]", "pydantic>=2", "pyarrow", "platformdirs"]
+desktop = ["pywebview"]
+dev = ["ruff", "pytest", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/sokyem/LCTIMSpy"
+
+[tool.setuptools.packages.find]
+include = ["LCTIMSpy*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

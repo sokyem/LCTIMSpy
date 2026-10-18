@@ -3,15 +3,13 @@
 Description: Functions for analyzing TIMSTOF data, pyTDFSDK installation is required"
 """
 
-import os
 import numpy as np
 import pandas as pd
-from pyTDFSDK import *
-from pyTDFSDK.init_tdf_sdk import init_tdf_sdk_api
-from pyTDFSDK.ctypes_data_structures import PressureCompensationStrategy
+from pyTDFSDK import extract_2d_tdf_spectrum, extract_3d_tdf_spectrum
 from pyTDFSDK.classes import TdfData
+from pyTDFSDK.ctypes_data_structures import PressureCompensationStrategy
+from pyTDFSDK.init_tdf_sdk import init_tdf_sdk_api
 from scipy.ndimage import gaussian_filter1d
-from scipy.signal import savgol_filter
 
 #initilaize bruker library 
 dll = init_tdf_sdk_api()
