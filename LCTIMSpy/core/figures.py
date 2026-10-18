@@ -82,13 +82,15 @@ def mobility_difference_figure(data: pd.DataFrame, metric: str = "mobility_diffe
         level = 0
         for row in stats.pairs[stats.pairs.reject].itertuples():
             y = top + span * (0.08 + 0.08 * level)
-            a, b = labels.get(row.group_a), labels.get(row.group_b)
-            if a is None or b is None:
+            if row.group_a not in labels or row.group_b not in labels:
                 continue
+            # Path coordinates on a category axis are positions (0, 1, ...), not names.
+            a, b = order.index(row.group_a), order.index(row.group_b)
             fig.add_shape(type="path", path=f"M {a},{y - span * 0.02} L {a},{y} L {b},{y} "
                                             f"L {b},{y - span * 0.02}",
                           xref="x", yref="y", line={"width": 1})
-            fig.add_annotation(x=b, y=y, text=significance_stars(row.adjusted_p_value),
+            fig.add_annotation(x=labels[row.group_b], y=y,
+                               text=significance_stars(row.adjusted_p_value),
                                showarrow=False, xanchor="left", yanchor="middle")
             level += 1
     fig.update_layout(title=title, xaxis_title="Target m/z",

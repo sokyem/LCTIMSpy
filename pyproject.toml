@@ -48,6 +48,11 @@ Homepage = "https://github.com/sokyem/LCTIMSpy"
 [tool.setuptools.packages.find]
 include = ["LCTIMSpy*"]
 
+# The built web UI (web/ -> npm run build) is committed and shipped in the
+# wheel, so `pip install` gives a working `lctimspy serve` with no Node.
+[tool.setuptools.package-data]
+LCTIMSpy = ["server/static/*", "server/static/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

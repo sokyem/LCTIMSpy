@@ -450,3 +450,15 @@ def test_orphaned_worker_cancels_itself(tmp_path):
     finally:
         stand_in.kill()
         worker.kill()
+
+
+def test_built_frontend_is_served(tmp_path):
+    from LCTIMSpy.server.app import STATIC_DIR
+
+    if not (STATIC_DIR / "index.html").is_file():
+        pytest.skip("web UI not built (cd web && npm run build)")
+    with TestClient(create_app(make_settings(tmp_path)), headers=AUTH) as c:
+        page = c.get("/")
+        assert page.status_code == 200 and "<div id=\"root\">" in page.text
+        asset = next((STATIC_DIR / "assets").glob("*.js")).name
+        assert c.get(f"/assets/{asset}").status_code == 200

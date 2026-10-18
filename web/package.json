@@ -1,0 +1,32 @@
+{
+  "name": "lctimspy-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "gen:api": "python -m LCTIMSpy.server.openapi > openapi.json && openapi-typescript openapi.json -o src/api/schema.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc --noEmit && vite build",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "lucide-react": "0.441.0",
+    "plotly.js-cartesian-dist-min": "2.35.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zustand": "4.5.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.48.2",
+    "@types/plotly.js": "2.33.4",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.3",
+    "openapi-typescript": "7.4.2",
+    "typescript": "5.6.3",
+    "vite": "5.4.10",
+    "vitest": "2.1.4"
+  }
+}
