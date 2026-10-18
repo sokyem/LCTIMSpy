@@ -29,11 +29,16 @@ dependencies = [
     "pyteomics",
     "statsmodels",
     "statannotations",
+    "pyarrow>=14",
+    "platformdirs",
 ]
+
+[project.scripts]
+lctimspy = "LCTIMSpy.cli:main"
 
 [project.optional-dependencies]
 bruker = ["pyTDFSDK @ git+https://github.com/gtluu/pyTDFSDK.git"]
-server = ["fastapi", "uvicorn[standard]", "pydantic>=2", "pyarrow", "platformdirs"]
+server = ["fastapi", "uvicorn[standard]", "pydantic>=2"]
 desktop = ["pywebview"]
 dev = ["ruff", "pytest", "pytest-cov"]
 

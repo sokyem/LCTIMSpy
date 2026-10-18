@@ -1,26 +1,31 @@
-
 """
-Description: Functions for analyzing TIMSTOF data, pyTDFSDK installation is required"
+Description: Functions for analyzing TIMSTOF data.
+
+The Bruker SDK (pyTDFSDK) is only needed by ``create_tdf_data`` and
+``extract_lcms_tdf_data`` and is imported inside them, so this module -- and the
+package -- imports cleanly on a machine without it.
 """
 
 import numpy as np
 import pandas as pd
-from pyTDFSDK import extract_2d_tdf_spectrum, extract_3d_tdf_spectrum
-from pyTDFSDK.classes import TdfData
-from pyTDFSDK.ctypes_data_structures import PressureCompensationStrategy
-from pyTDFSDK.init_tdf_sdk import init_tdf_sdk_api
 from scipy.ndimage import gaussian_filter1d
 
-#initilaize bruker library 
-dll = init_tdf_sdk_api()
 
-#Create a TDF onject from a .d 
+def create_tdf_data(path, tdf_sdk=None, pressure_compensation_strategy=None, sql_chunksize=500):
+    """Open a Bruker .d folder as a pyTDFSDK ``TdfData``.
 
-def create_tdf_data(path, tdf_sdk, pressure_compensation_strategy, sql_chunksize=500):
-    dll = init_tdf_sdk_api()
+    ``tdf_sdk`` and ``pressure_compensation_strategy`` are accepted for backwards
+    compatibility and ignored: the SDK is loaded once per process and per-frame
+    pressure compensation is always used.
+    """
+    from pyTDFSDK.classes import TdfData
+    from pyTDFSDK.ctypes_data_structures import PressureCompensationStrategy
+
+    from .core.sdk import load_sdk
+
     return TdfData(
         bruker_d_folder_name=path,
-        tdf_sdk=dll,
+        tdf_sdk=load_sdk(),
         pressure_compensation_strategy=PressureCompensationStrategy.PerFramePressureCompensation,
         sql_chunksize=sql_chunksize
     )
@@ -49,6 +54,8 @@ def extract_lcms_tdf_data(tdf_data, exclude_mobility=False, mode=None, profile_b
     pd.DataFrame
         DataFrame with columns: frame, polarity, retention_time, mz, intensity, and (if not excluded) mobility.
     """
+    from pyTDFSDK.tims import extract_2d_tdf_spectrum, extract_3d_tdf_spectrum
+
     frames_df = tdf_data.analysis['Frames']
     frames_map = frames_df.set_index('Id').to_dict(orient='index')
     frames_list = list(frames_map.keys())
