@@ -92,6 +92,30 @@ def test_token_host_and_cookie(tmp_path):
         assert c.get("/api/datasets").status_code == 200              # cookie alone suffices
 
 
+def test_cross_origin_requests_are_refused(tmp_path):
+    """Cookies ignore ports, so a page on another localhost port must not ride the session."""
+    with TestClient(create_app(make_settings(tmp_path))) as c:
+        c.cookies.set("lctims_token", TOKEN)
+        ok = c.post("/api/peptides/fragments", json={"peptide": "PEPTIDE"},
+                    headers={"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"})
+        assert ok.status_code == 200
+        for headers in ({"Origin": "http://127.0.0.1:3000"},
+                        {"Sec-Fetch-Site": "same-site"},
+                        {"Sec-Fetch-Site": "cross-site"},
+                        {"Origin": "null"}):
+            r = c.post("/api/peptides/fragments", json={"peptide": "PEPTIDE"}, headers=headers)
+            assert r.status_code == 403, headers
+        # The bootstrap token is not accepted on the API itself.
+        c.cookies.clear()
+        assert c.get("/api/datasets", params={"token": TOKEN}).status_code == 401
+
+
+def test_cookie_name_is_per_port(tmp_path):
+    with TestClient(create_app(make_settings(tmp_path)), base_url="http://127.0.0.1:8123") as c:
+        r = c.get(f"/?token={TOKEN}", follow_redirects=False)
+        assert r.headers["set-cookie"].startswith("lctims_token_8123=")
+
+
 def test_stale_cookie_is_replaced_by_url_token(tmp_path):
     with TestClient(create_app(make_settings(tmp_path))) as c:
         c.cookies.set("lctims_token", "from-a-previous-run")
