@@ -295,6 +295,14 @@ class Cache:
         except OSError as exc:
             raise CacheError(f"Cannot read cache entry {entry.key}: {exc}") from exc
         df = table.to_pandas()
+        # Stored narrow to halve the file; widened here so every query computes
+        # in float64, as the legacy in-memory extractor did. Mobility is snapped
+        # back to the exact float64 bin centres the extractor rounded to.
+        if "intensity" in df:
+            df["intensity"] = df["intensity"].astype(np.float64)
+        if "mobility" in df:
+            width = entry.config.mobility_bin_width
+            df["mobility"] = np.round(df["mobility"].to_numpy(np.float64) / width) * width
         if with_retention_time:
             frames, rts, _ = _frame_index(str(entry.path / FRAMES_FILE))
             lookup = np.full(int(frames.max()) + 1, np.nan)

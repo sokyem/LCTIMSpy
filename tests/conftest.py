@@ -21,8 +21,16 @@ PROTON = 1.00727646677
 N_FRAMES = 120
 NUM_SCANS = 10
 SECONDS_PER_FRAME = 0.6
-TARGET_MZ = 500.25          # a fragment that elutes around frame 40
-TARGET_MOBILITY = 0.9123
+# Two fragment ions, each present as an isomer pair: isomer A elutes at frame
+# 40 (RT 0.40 min), isomer B at frame 80 (RT 0.80 min) with a higher mobility.
+# The second target's B isomer is shifted a further 0.004 so the two targets'
+# mobility differences differ, which the stats tests rely on.
+TARGETS = (500.25, 700.40)
+ISOMERS = ((40, 0.9123), (80, 0.9500))      # (apex frame, mobility)
+SECOND_TARGET_EXTRA_SHIFT = 0.004
+TARGET_MZ = TARGETS[0]
+TARGET_MOBILITY = ISOMERS[0][1]
+WINDOWS = ((0.30, 0.50), (0.70, 0.90))      # RT windows (min) around the two isomers
 
 
 def is_ms1(frame_id: int) -> bool:
@@ -56,28 +64,38 @@ def make_fake_d(root: Path, name: str = "sample.d", n_frames: int = N_FRAMES) ->
 
 
 class FakeFrameSource:
-    """Deterministic spectra: noise across 100-1700 m/z plus an eluting target peak.
+    """Deterministic spectra: noise across 100-1700 m/z plus the eluting isomer peaks.
 
-    ``fail_frames`` raise, ``empty_frames`` return None, and ``on_frame`` is
-    called before every read (tests use it to cancel or interrupt mid-run).
+    ``seed`` varies peak intensities between replicates. ``fail_frames`` raise,
+    ``empty_frames`` return None, and ``on_frame`` is called before every read
+    (tests use it to cancel or interrupt mid-run).
     """
 
-    def __init__(self, fail_frames=(), empty_frames=(), on_frame=None):
+    def __init__(self, fail_frames=(), empty_frames=(), on_frame=None, seed=0):
         self.fail_frames = set(fail_frames)
         self.empty_frames = set(empty_frames)
         self.on_frame = on_frame
+        self.seed = seed
         self.calls = 0
 
     def spectrum(self, frame_id: int):
-        rng = np.random.default_rng(frame_id)
+        rng = np.random.default_rng([self.seed, frame_id])
         n = 200
-        mz = rng.uniform(100, 1700, n)
-        intensity = rng.uniform(10, 100, n).round()
-        mobility = rng.uniform(0.6, 1.4, n)
-        peak = 1000 * np.exp(-0.5 * ((frame_id - 40) / 4) ** 2)
-        mz = np.append(mz, TARGET_MZ + rng.normal(0, 0.002))
-        intensity = np.append(intensity, round(peak) + 1)
-        mobility = np.append(mobility, TARGET_MOBILITY)
+        mz = list(rng.uniform(100, 1700, n))
+        intensity = list(rng.uniform(10, 100, n).round())
+        mobility = list(rng.uniform(0.6, 1.4, n))
+        for t_idx, target in enumerate(TARGETS):
+            for i_idx, (apex, mob) in enumerate(ISOMERS):
+                amp = 1000 * (1 + 0.5 * t_idx) * np.exp(-0.5 * ((frame_id - apex) / 4) ** 2)
+                if amp < 1:
+                    continue
+                centre = mob + (SECOND_TARGET_EXTRA_SHIFT if t_idx == 1 and i_idx == 1 else 0)
+                for k in range(-3, 4):
+                    mz.append(target + rng.normal(0, 0.002))
+                    weight = np.exp(-0.25 * k * k) * rng.uniform(0.8, 1.2)
+                    intensity.append(round(amp * weight) + 1)
+                    mobility.append(centre + 0.003 * k)
+        mz, intensity, mobility = map(np.asarray, (mz, intensity, mobility))
         order = np.argsort(mz)
         return mz[order], intensity[order], mobility[order]
 

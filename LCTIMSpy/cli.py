@@ -2,6 +2,7 @@
 
     lctimspy doctor                 check the SDK, dependencies and cache
     lctimspy extract A.d [B.d ...]  extract into the cache (Ctrl-C cancels cleanly)
+    lctimspy analyze A.d B.d C.d --peptide SEQ --windows 18.3:19.0 21.5:22.2
     lctimspy cache list|clear|remove KEY|sweep
 """
 
@@ -155,6 +156,139 @@ def cmd_extract(args) -> int:
     return 1 if failures else 0
 
 
+# ---- analyze ----------------------------------------------------------------
+
+def _resolve_entries(specs, cache, config):
+    """Map each CLI dataset (a .d path or a cache key) to (sample_id, CacheEntry)."""
+    import re
+
+    from .core.errors import DatasetError
+    from .core.io.paths import validate_d_folder
+
+    out = {}
+    for spec in specs:
+        if re.fullmatch(r"[0-9a-f]{32}", spec):
+            entry = cache.get(spec)
+            if entry is None:
+                raise DatasetError(f"No cache entry {spec}; see `lctimspy cache list`.")
+        else:
+            entry = cache.lookup(validate_d_folder(spec), config)
+            if entry is None:
+                raise DatasetError(f"{spec} has not been extracted with these settings; "
+                                   f"run `lctimspy extract {spec}` first.")
+        name, n = entry.dataset.name, 2
+        while name in out:
+            name, n = f"{entry.dataset.name}_{n}", n + 1
+        out[name] = entry
+    return out
+
+
+def _targets(args):
+    from .core.fragments import target_list
+
+    if args.mz:
+        return [(None, mz) for mz in args.mz]
+    return target_list(args.peptide, tuple(args.charges), args.ions or None)
+
+
+def cmd_analyze(args) -> int:
+    import pandas as pd
+
+    from .core.chrom import chromatograms, find_rt_peaks, summed_chromatogram
+    from .core.config import ExtractionConfig, MzTolerance, QueryConfig, RtWindow, StatsConfig
+    from .core.errors import LCTIMSError
+    from .core.export import write_figure, write_table
+    from .core.figures import chromatogram_figure, mobility_difference_figure, mobilogram_figure
+    from .core.io.cache import Cache
+    from .core.mobil import mobilograms
+    from .core.mobility_diff import mobility_difference
+    from .core.stats import compare_targets
+
+    cache = Cache(args.cache_dir)
+    try:
+        entries = _resolve_entries(
+            args.datasets, cache, ExtractionConfig(mobility_bin_width=args.mobility_bin_width))
+    except LCTIMSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    targets = _targets(args)
+    if not targets:
+        print("error: no targets (check --ions against the series names, e.g. y1+ b2+)",
+              file=sys.stderr)
+        return 1
+    labels = [label for label, _ in targets]
+    mzs = [mz for _, mz in targets]
+    query = QueryConfig(
+        tolerance=MzTolerance(args.tol, args.tol_unit),
+        mobilogram_sigma=args.sigma,
+        baseline_correction=not args.no_baseline,
+        intensity_threshold=None if args.threshold < 0 else args.threshold,
+        threshold_on=args.threshold_on,
+    )
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    write_table(pd.DataFrame({"label": labels, "target_mz": mzs}), out / "targets.csv")
+
+    eics = {sid: chromatograms(cache, e, mzs, query.tolerance, labels) for sid, e in entries.items()}
+    if args.windows == ["auto"]:
+        first = next(iter(eics))
+        peaks = find_rt_peaks(summed_chromatogram(eics[first]), n=2)
+        if len(peaks) < 2:
+            print(f"error: found {len(peaks)} RT peak(s) in {first}; pass --windows START:END ...",
+                  file=sys.stderr)
+            return 1
+        windows = [RtWindow(round(p.start_rt, 3), round(p.end_rt, 3)) for p in peaks]
+        print("auto windows (from " + first + "): "
+              + "  ".join(f"{w.start:g}:{w.end:g}" for w in windows))
+    else:
+        try:
+            windows = [RtWindow.parse(w) for w in args.windows]
+        except ValueError as exc:
+            print(f"error: --windows: {exc}", file=sys.stderr)
+            return 1
+        if len(windows) < 2:
+            print("error: give at least two --windows", file=sys.stderr)
+            return 1
+
+    for sid, entry in entries.items():
+        write_figure(chromatogram_figure(eics[sid], windows, title=f"EIC — {sid}"),
+                     out / f"chromatograms_{sid}.html")
+        mobs = mobilograms(cache, entry, mzs, windows, query)
+        write_figure(mobilogram_figure(mobs, title=f"Mobilograms — {sid}"),
+                     out / f"mobilograms_{sid}.html")
+
+    result = mobility_difference(cache, entries, mzs, windows, query)
+    label_of = dict(zip(mzs, labels))
+    for df in (result.per_window, result.differences, result.excluded):
+        df.insert(2, "label", df["target_mz"].map(label_of))
+    write_table(result.per_window, out / "mobility_per_window.csv")
+    write_table(result.differences, out / "mobility_difference.csv")
+    write_table(result.excluded, out / "excluded.csv")
+    if len(windows) == 2:
+        write_table(result.to_legacy_frame(), out / "mobility_difference_legacy_format.csv")
+
+    n_samples = len(entries)
+    print(f"{len(mzs)} targets x {n_samples} samples x {len(windows)} windows: "
+          f"{len(result.differences)} differences, {len(result.excluded)} excluded")
+    stats_cfg = StatsConfig(metric=args.metric, correction=args.correction, alpha=args.alpha)
+    if n_samples >= stats_cfg.min_samples:
+        try:
+            stats = compare_targets(result.differences, stats_cfg)
+        except ValueError as exc:
+            print(f"stats skipped: {exc}")
+        else:
+            write_table(stats.pairs, out / "stats_pairs.csv")
+            write_figure(mobility_difference_figure(stats.data, stats.metric, stats,
+                                                    title="Mobility difference by target"),
+                         out / "mobility_difference.html")
+            print(f"stats: {int(stats.pairs.reject.sum())} of {len(stats.pairs)} pairs "
+                  f"significant ({stats.correction}, alpha {stats.alpha:g})")
+    else:
+        print(f"stats skipped: need at least {stats_cfg.min_samples} samples")
+    print(f"results written to {out.resolve()}")
+    return 0
+
+
 # ---- cache ------------------------------------------------------------------
 
 def cmd_cache(args) -> int:
@@ -201,6 +335,32 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also extract MS/MS frames (default: MS1 only)")
     p.add_argument("--force", action="store_true", help="re-extract even if cached")
     p.set_defaults(func=cmd_extract)
+
+    p = sub.add_parser("analyze", help="mobility difference between RT windows, from the cache")
+    p.add_argument("datasets", nargs="+", metavar="D_FOLDER_OR_KEY")
+    tg = p.add_mutually_exclusive_group(required=True)
+    tg.add_argument("--peptide", help='sequence; end with "(-0.98)" for C-terminal amidation')
+    tg.add_argument("--mz", type=float, nargs="+", help="explicit target m/z values")
+    p.add_argument("--charges", type=int, nargs="+", default=[1, 2])
+    p.add_argument("--ions", nargs="+", help="series to keep, e.g. y1+ b1+ (default: all)")
+    p.add_argument("--windows", nargs="+", required=True, metavar="START:END",
+                   help='RT windows in minutes, or "auto" to detect the two main peaks')
+    p.add_argument("--tol", type=float, default=0.02, help="m/z tolerance (default 0.02)")
+    p.add_argument("--tol-unit", choices=["Da", "ppm"], default="Da")
+    p.add_argument("--sigma", type=float, default=None, help="gaussian smoothing of mobilograms")
+    p.add_argument("--no-baseline", action="store_true", help="skip baseline subtraction")
+    p.add_argument("--threshold", type=float, default=100,
+                   help="min max-intensity per window; negative disables (default 100)")
+    p.add_argument("--threshold-on", choices=["corrected", "raw"], default="corrected")
+    p.add_argument("--metric", choices=["mobility_difference", "peak_mobility_difference"],
+                   default="mobility_difference")
+    p.add_argument("--correction", choices=["bonferroni", "holm", "tukey", "none"],
+                   default="bonferroni")
+    p.add_argument("--alpha", type=float, default=0.05)
+    p.add_argument("--mobility-bin-width", type=float, default=0.0005,
+                   help="must match the extraction (default 0.0005)")
+    p.add_argument("--out", default="lctims_results", help="output folder")
+    p.set_defaults(func=cmd_analyze)
 
     p = sub.add_parser("cache", help="inspect or clean the cache")
     csub = p.add_subparsers(dest="cache_cmd", required=True)

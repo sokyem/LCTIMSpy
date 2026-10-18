@@ -17,9 +17,9 @@ from LCTIMSpy.core.io.cache import Cache, cache_key
 from LCTIMSpy.core.io.extract import extract_to_cache
 from LCTIMSpy.core.progress import CancelToken
 from tests.conftest import (
+    ISOMERS,
     N_FRAMES,
     SECONDS_PER_FRAME,
-    TARGET_MOBILITY,
     TARGET_MZ,
     FakeFrameSource,
     is_ms1,
@@ -110,7 +110,9 @@ def test_load_mz_window_matches_brute_force(fake_d, cache, small_row_groups):
     want = everything[(everything.mz >= lo) & (everything.mz <= hi)]
     assert len(got) == len(want) > 0
     assert set(got["frame"]) == set(want["frame"])
-    assert (got["mobility"] - TARGET_MOBILITY).abs().max() < 0.0005
+    # Every hit belongs to one of the two isomers' mobility envelopes.
+    near = [(got["mobility"] - m).abs() <= 0.01 for _, m in ISOMERS]
+    assert (near[0] | near[1]).all()
     # retention_time is joined from the frame index.
     rt = dict(zip(want["frame"], want["frame"] * SECONDS_PER_FRAME / 60))
     assert np.allclose(got["retention_time"], got["frame"].map(rt))

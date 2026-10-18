@@ -77,3 +77,43 @@ class RtWindow:
         if not sep:
             raise ValueError(f"expected START:END, got {text!r}")
         return cls(float(start), float(end))
+
+
+@dataclass(frozen=True)
+class QueryConfig:
+    """How targets are matched and mobilograms are built, shared by every query."""
+
+    tolerance: MzTolerance = MzTolerance()
+    # Gaussian sigma (in mobility bins) applied to mobilograms; None = no smoothing.
+    mobilogram_sigma: float | None = None
+    baseline_correction: bool = True
+    # A target is dropped for a sample unless every window's max intensity
+    # reaches this. None disables the check.
+    intensity_threshold: float | None = 100
+    # Which maximum the threshold is compared with. The legacy code compared the
+    # baseline-corrected maximum, so the threshold's meaning changed when
+    # baseline_correction was toggled. "corrected" preserves the published
+    # behaviour; "raw" compares the maximum before baseline subtraction.
+    threshold_on: Literal["corrected", "raw"] = "corrected"
+
+    def __post_init__(self) -> None:
+        if self.threshold_on not in ("corrected", "raw"):
+            raise ValueError(f"threshold_on must be 'corrected' or 'raw', got {self.threshold_on!r}")
+        if self.mobilogram_sigma is not None and not self.mobilogram_sigma > 0:
+            raise ValueError(f"mobilogram_sigma must be > 0 or None, got {self.mobilogram_sigma!r}")
+
+
+@dataclass(frozen=True)
+class StatsConfig:
+    metric: Literal["mobility_difference", "peak_mobility_difference"] = "mobility_difference"
+    correction: Literal["bonferroni", "holm", "tukey", "none"] = "bonferroni"
+    alpha: float = 0.05
+    min_samples: int = 3
+    # The legacy code called this a Welch test but ran Student's t-test
+    # (scipy's default equal_var=True). Kept as the default so published
+    # p-values reproduce; set False for Welch.
+    equal_var: bool = True
+
+    def __post_init__(self) -> None:
+        if self.correction not in ("bonferroni", "holm", "tukey", "none"):
+            raise ValueError(f"unsupported correction {self.correction!r}")
