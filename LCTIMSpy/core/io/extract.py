@@ -1,4 +1,4 @@
-"""Full extraction of a ``.d`` folder into the Parquet cache.
+"""Full extraction of a ``.d`` folder or an mzML file into the Parquet cache.
 
 The cache must be mz-sorted (that is what makes every later query a pushdown
 read), but a full extraction is 1-10 GB -- too big to sort in memory. So it runs
@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,12 +35,19 @@ from .cache import (
     EXTRACTOR_VERSION,
     FRAMES_FILE,
     META_FILE,
+    MSMS_FILE,
+    PRECURSORS_FILE,
     SCHEMA_VERSION,
     Cache,
     CacheEntry,
     source_fingerprint,
 )
-from .paths import validate_d_folder
+from .mzml import MzmlFrameSource, index_mzml, is_mzml
+from .pasef import MSMS_BATCH, add_mobility, read_pasef_tables, summarize_precursors
+from .paths import validate_source
+
+TDF_MOBILITY = {"present": True, "coordinate": "1/K0", "unit": "V·s/cm²",
+                "representation": "TDF scan number via Bruker TDF-SDK", "cv_name": None}
 
 FRAME_BATCH = 50
 N_BUCKETS = 256
@@ -70,6 +77,7 @@ class ExtractStats:
     mz_max: float | None = None
     seconds: float = 0.0
     failed_frames: list[int] = field(default_factory=list)
+    pasef: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = self.__dict__.copy()
@@ -99,7 +107,7 @@ def extract_to_cache(
     config = config or ExtractionConfig()
     cache = cache or Cache()
     cancel = cancel or CancelToken()
-    d = validate_d_folder(d_path)
+    d = validate_source(d_path)
     key = cache.key_for(d, config)
 
     if not force:
@@ -109,10 +117,29 @@ def extract_to_cache(
             return existing
 
     cache.sweep_partials()
-    dataset = read_dataset_meta(d)
-    frames = read_frames(d)
-    if config.ms1_only:
-        frames = frames[frames["MsMsType"] == 0]
+    if is_mzml(d):
+        index = index_mzml(d, reporter=reporter, cancel=cancel)
+        dataset, frames = index.dataset_meta(), index.frames
+        mobility = dict(index.mobility)
+
+        def open_source():
+            return closing(MzmlFrameSource(index))
+
+        def msms_plan(source):
+            return index.precursors, getattr(source, "read_pasef_msms", None), list(index.notes)
+    else:
+        dataset = read_dataset_meta(d)
+        all_frames = read_frames(d)
+        frames = all_frames[all_frames["MsMsType"] == 0] if config.ms1_only else all_frames
+        mobility = dict(TDF_MOBILITY)
+
+        def open_source():
+            return open_frame_source(d)
+
+        def msms_plan(source):
+            return _pasef_plan(source, d, all_frames)
+    # Binning is defined in 1/K0 units; other coordinates are kept as measured.
+    mobility["binned"] = mobility.get("coordinate") == "1/K0"
     if frames.empty:
         raise DatasetError(f"{d} has no {'MS1 ' if config.ms1_only else ''}frames to extract.")
     fingerprint = source_fingerprint(d)
@@ -122,7 +149,7 @@ def extract_to_cache(
         # fast without touching the cache.
         source = (
             frame_source if frame_source is not None
-            else stack.enter_context(open_frame_source(d))
+            else stack.enter_context(open_source())
         )
         tmp = stack.enter_context(cache.writer(key))
         if on_temp_dir is not None:
@@ -132,7 +159,10 @@ def extract_to_cache(
             if dataset.mz_acq_lower is not None and dataset.mz_acq_upper is not None
             else DEFAULT_MZ_RANGE
         )
-        stats = _extract(source, frames, config, tmp, mz_range, reporter, cancel)
+        stats = _extract(source, frames, config, tmp, mz_range, reporter, cancel,
+                         bin_mobility=mobility["binned"])
+        summary, read_msms, notes = msms_plan(source)
+        stats.pasef = _write_msms(summary, read_msms, notes, tmp, reporter, cancel)
 
         _write_json(tmp / FRAMES_FILE, {
             "frame": frames["Id"].astype(int).tolist(),
@@ -152,6 +182,7 @@ def extract_to_cache(
             "bytes": data_bytes,
             "created": time.time(),
             "stats": stats.to_dict(),
+            "mobility": mobility,
         })
 
     entry = cache.get(key)
@@ -173,6 +204,7 @@ def _extract(
     mz_range: tuple[float, float],
     reporter: ProgressReporter,
     cancel: CancelToken,
+    bin_mobility: bool = True,
 ) -> ExtractStats:
     import pyarrow as pa
 
@@ -224,7 +256,7 @@ def _extract(
                 _spill_batch(
                     np.concatenate(mz_parts),
                     np.concatenate(int_parts),
-                    (np.round(np.concatenate(mob_parts) / width) * width).astype(np.float32),
+                    _mobility_column(np.concatenate(mob_parts), width, bin_mobility),
                     np.concatenate(frame_parts),
                     edges, spill_dir, writers, schema, stats,
                 )
@@ -295,3 +327,78 @@ def _finalize(spill_dir, out_path, buckets, schema, reporter, cancel):
             del table
             path.unlink()
             timer.update(i)
+
+
+def _mobility_column(values: np.ndarray, width: float, bin_mobility: bool) -> np.ndarray:
+    if bin_mobility:
+        values = np.round(values / width) * width
+    return values.astype(np.float32)
+
+
+def _pasef_plan(source, d: Path, all_frames: pd.DataFrame):
+    """DDA-PASEF precursors of a ``.d`` run, with 1/K0 if the source can convert scans."""
+    precursors, pasef = read_pasef_tables(d)
+    if precursors.empty:
+        return None, None, ["no DDA-PASEF precursors in this run"]
+    summary = summarize_precursors(precursors, pasef, all_frames)
+    notes = []
+    convert = getattr(source, "scan_to_mobility", None)
+    if convert is not None:
+        summary = add_mobility(summary, convert)
+    else:
+        notes.append("frame source cannot convert scans to 1/K0; precursor mobility missing")
+        for col in ("mobility", "isolation_mobility_low", "isolation_mobility_high"):
+            summary[col] = np.nan
+    return summary, getattr(source, "read_pasef_msms", None), notes
+
+
+def _write_msms(summary: pd.DataFrame | None, read_msms, notes: list[str], tmp: Path,
+                reporter: ProgressReporter, cancel: CancelToken) -> dict:
+    """Cache precursors and their MS/MS spectra (DDA-PASEF or mzML MS2).
+
+    Writes ``precursors.parquet`` (one row per precursor) and ``msms.parquet``
+    (precursor_id, mz, intensity; sorted by precursor_id). Anything the source
+    cannot provide is recorded, not faked: no SDK conversion means no
+    mobility; no MS/MS reader means no spectra.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    if summary is None or summary.empty:
+        return {"precursors": 0, "msms_spectra": 0, "msms_peaks": 0,
+                "notes": notes or ["no MS/MS precursors in this run"]}
+    pq.write_table(pa.Table.from_pandas(summary, preserve_index=False), tmp / PRECURSORS_FILE,
+                   compression="zstd")
+    if read_msms is None:
+        notes.append("frame source cannot read PASEF MS/MS spectra")
+        return {"precursors": len(summary), "msms_spectra": 0, "msms_peaks": 0, "notes": notes}
+
+    schema = pa.schema([("precursor_id", pa.int64()), ("mz", pa.float64()),
+                        ("intensity", pa.float32())])
+    ids = summary.loc[summary["n_msms_frames"].fillna(0) > 0, "precursor_id"].to_numpy(np.int64)
+    timer = StageTimer("msms", len(ids), reporter)
+    timer.update(0, "Reading MS/MS spectra")
+    n_spectra = n_peaks = 0
+    with pq.ParquetWriter(str(tmp / MSMS_FILE), schema, compression="zstd",
+                          write_statistics=True) as writer:
+        for start in range(0, len(ids), MSMS_BATCH):
+            cancel.raise_if_cancelled()
+            batch = [int(i) for i in ids[start:start + MSMS_BATCH]]
+            spectra = read_msms(batch)
+            cols = {"precursor_id": [], "mz": [], "intensity": []}
+            for pid in sorted(spectra):
+                mz, intensity = spectra[pid]
+                if len(mz) == 0:
+                    continue
+                cols["precursor_id"].append(np.full(len(mz), pid, dtype=np.int64))
+                cols["mz"].append(np.asarray(mz, dtype=np.float64))
+                cols["intensity"].append(np.asarray(intensity, dtype=np.float32))
+                n_spectra += 1
+                n_peaks += len(mz)
+            if cols["mz"]:
+                writer.write_table(pa.table({k: np.concatenate(v) for k, v in cols.items()},
+                                            schema=schema))
+            Cache.heartbeat(tmp)
+            timer.update(min(start + MSMS_BATCH, len(ids)))
+    return {"precursors": len(summary), "msms_spectra": n_spectra, "msms_peaks": n_peaks,
+            "notes": notes}

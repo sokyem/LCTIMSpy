@@ -31,6 +31,9 @@ dependencies = [
     "statannotations",
     "pyarrow>=14",
     "platformdirs",
+    # mzML / mzIdentML parsing (pyteomics needs both for PSI formats)
+    "lxml>=5",
+    "psims>=1.3",
 ]
 
 [project.scripts]

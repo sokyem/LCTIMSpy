@@ -41,6 +41,17 @@ def validate_d_folder(path: str | os.PathLike) -> Path:
     return p.resolve()
 
 
+def validate_source(path: str | os.PathLike) -> Path:
+    """A ``.d`` folder (Bruker) or an ``.mzML`` file; raises DatasetError otherwise."""
+    p = Path(path)
+    name = p.name.lower()
+    if name.endswith(".mzml") or name.endswith(".mzml.gz"):
+        if not p.is_file():
+            raise DatasetError(f"{p} does not exist or is not a file.")
+        return p.resolve()
+    return validate_d_folder(p)
+
+
 def is_network_path(path: str | os.PathLike) -> bool:
     """Best-effort check for UNC paths, mapped network drives and network mounts."""
     s = str(path)

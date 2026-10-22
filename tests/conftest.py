@@ -37,11 +37,69 @@ def is_ms1(frame_id: int) -> bool:
     return frame_id % 5 != 0
 
 
-def make_fake_d(root: Path, name: str = "sample.d", n_frames: int = N_FRAMES) -> Path:
+# Fake TIMS calibration: scan 0 is the top of the 1/K0 range and 1/K0 falls
+# linearly with scan number, as on a real timsTOF.
+SCAN0_MOBILITY = 1.6
+MOBILITY_PER_SCAN = 0.001
+
+
+def fake_scan_to_mobility(scans):
+    return SCAN0_MOBILITY - MOBILITY_PER_SCAN * np.asarray(scans, dtype=float)
+
+
+def fake_mobility_to_scan(mobility):
+    return (SCAN0_MOBILITY - np.asarray(mobility, dtype=float)) / MOBILITY_PER_SCAN
+
+
+def pasef_precursor_plan(n_frames: int = N_FRAMES):
+    """Deterministic DDA-PASEF design for the fake run.
+
+    Every MS/MS frame f (a multiple of 5) fragments two precursors picked from
+    the MS1 frame before it: the first target at the mobility of whichever
+    isomer is eluting (or a background ion), and one background ion. Returns
+    (precursor rows, pasef rows) in table order.
+    """
+    precursors, pasef = [], []
+    pid = 0
+    for f in range(5, n_frames + 1, 5):
+        parent = f - 1
+        near = [(apex, mob) for apex, mob in ISOMERS if abs(parent - apex) <= 8]
+        picks = []
+        if near:
+            apex, mob = near[0]
+            picks.append((TARGET_MZ, 2, mob))
+        else:
+            picks.append((400.0 + f, 2, 1.0))
+        picks.append((900.0 + f / 10, None, 1.2))            # charge undetermined
+        for mz, z, mob in picks:
+            pid += 1
+            scan = float(fake_mobility_to_scan(mob))
+            mono = None if z is None else mz
+            precursors.append((pid, mz + 0.01, mz + 0.005, mono, z, scan, 1e5, parent))
+            pasef.append((f, int(scan) - 20, int(scan) + 20, mz, 2.0, 30.0, pid))
+    return precursors, pasef
+
+
+def make_fake_d(root: Path, name: str = "sample.d", n_frames: int = N_FRAMES,
+                pasef: bool = False, calibration: bool = False,
+                mobility_range: tuple[float, float] = (0.6, 1.4)) -> Path:
     d = root / name
     d.mkdir(parents=True)
     (d / "analysis.tdf_bin").write_bytes(b"\0" * 16)
     conn = sqlite3.connect(d / "analysis.tdf")
+    if calibration:
+        conn.execute("CREATE TABLE TimsCalibration (Id INTEGER PRIMARY KEY, ModelType INTEGER)")
+        conn.execute("INSERT INTO TimsCalibration VALUES (1, 2)")
+    if pasef:
+        precursors, rows = pasef_precursor_plan(n_frames)
+        conn.execute("CREATE TABLE Precursors (Id INTEGER PRIMARY KEY, LargestPeakMz REAL, "
+                     "AverageMz REAL, MonoisotopicMz REAL, Charge INTEGER, ScanNumber REAL, "
+                     "Intensity REAL, Parent INTEGER)")
+        conn.executemany("INSERT INTO Precursors VALUES (?, ?, ?, ?, ?, ?, ?, ?)", precursors)
+        conn.execute("CREATE TABLE PasefFrameMsMsInfo (Frame INTEGER, ScanNumBegin INTEGER, "
+                     "ScanNumEnd INTEGER, IsolationMz REAL, IsolationWidth REAL, "
+                     "CollisionEnergy REAL, Precursor INTEGER)")
+        conn.executemany("INSERT INTO PasefFrameMsMsInfo VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
     conn.execute(
         "CREATE TABLE Frames (Id INTEGER PRIMARY KEY, Time REAL, Polarity TEXT, "
         "MsMsType INTEGER, NumScans INTEGER)"
@@ -55,7 +113,8 @@ def make_fake_d(root: Path, name: str = "sample.d", n_frames: int = N_FRAMES) ->
     conn.executemany(
         "INSERT INTO GlobalMetadata VALUES (?, ?)",
         [("MzAcqRangeLower", "100"), ("MzAcqRangeUpper", "1700"),
-         ("OneOverK0AcqRangeLower", "0.6"), ("OneOverK0AcqRangeUpper", "1.4"),
+         ("OneOverK0AcqRangeLower", str(mobility_range[0])),
+         ("OneOverK0AcqRangeUpper", str(mobility_range[1])),
          ("InstrumentName", "timsTOF Fake"), ("AcquisitionSoftware", "pytest")],
     )
     conn.commit()
@@ -108,6 +167,28 @@ class FakeFrameSource:
         if frame_id in self.empty_frames:
             return None
         return self.spectrum(frame_id)
+
+    # -- optional PASEF capabilities (like BrukerFrameSource) --------------------
+
+    def scan_to_mobility(self, frame_id: int, scans):
+        return fake_scan_to_mobility(scans)
+
+    @staticmethod
+    def msms_spectrum(precursor_id: int):
+        """A deterministic centroided MS/MS spectrum for one precursor."""
+        rng = np.random.default_rng(precursor_id)
+        mz = np.sort(rng.uniform(100, 1000, 30))
+        return mz, rng.uniform(10, 1000, 30).round()
+
+    def read_pasef_msms(self, precursor_ids):
+        return {int(p): self.msms_spectrum(int(p)) for p in precursor_ids}
+
+
+class Ms1OnlyFrameSource(FakeFrameSource):
+    """A frame source without the optional PASEF capabilities (no SDK conversions)."""
+
+    scan_to_mobility = None
+    read_pasef_msms = None
 
 
 @pytest.fixture

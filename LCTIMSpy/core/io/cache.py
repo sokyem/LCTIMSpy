@@ -27,7 +27,7 @@ import time
 import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -41,17 +41,24 @@ from .paths import REQUIRED_FILES, cache_root
 
 SCHEMA_VERSION = 1
 # Bump when extraction output changes for the same input and config.
-EXTRACTOR_VERSION = 1
+# 2: also caches DDA-PASEF precursors and MS/MS spectra.
+EXTRACTOR_VERSION = 2
 
 DATA_FILE = "data.parquet"
 META_FILE = "meta.json"
 FRAMES_FILE = "frame_index.json"
+PRECURSORS_FILE = "precursors.parquet"
+MSMS_FILE = "msms.parquet"
 LAST_USED_FILE = "last_used"
 HEARTBEAT_FILE = "heartbeat"
 TMP_MARK = ".tmp-"
 OLD_MARK = ".old-"
 
 DEFAULT_MAX_BYTES = 50 * 1024**3
+
+# Entries written before the mobility coordinate was recorded are Bruker TDF.
+DEFAULT_MOBILITY = {"present": True, "coordinate": "1/K0", "unit": "V·s/cm²",
+                    "representation": "TDF scan number via Bruker TDF-SDK", "binned": True}
 
 
 def _canonical(obj) -> str:
@@ -60,6 +67,9 @@ def _canonical(obj) -> str:
 
 def source_fingerprint(d_path: Path) -> dict[str, list[int]]:
     """Size and mtime of the files whose change invalidates a cache entry."""
+    if d_path.is_file():                        # mzML: the file itself
+        st = d_path.stat()
+        return {d_path.name: [st.st_size, st.st_mtime_ns]}
     out = {}
     for name in REQUIRED_FILES:
         st = (d_path / name).stat()
@@ -89,6 +99,8 @@ class CacheEntry:
     created: float
     last_used: float
     stats: dict
+    # Which mobility coordinate the cache holds (see extract.TDF_MOBILITY).
+    mobility: dict = field(default_factory=lambda: dict(DEFAULT_MOBILITY))
 
     @property
     def data_path(self) -> Path:
@@ -140,6 +152,7 @@ class Cache:
                 created=meta["created"],
                 last_used=last_used,
                 stats=meta.get("stats", {}),
+                mobility=meta.get("mobility", dict(DEFAULT_MOBILITY)),
             )
         except (OSError, ValueError, KeyError, TypeError):
             return None
@@ -301,14 +314,40 @@ class Cache:
         if "intensity" in df:
             df["intensity"] = df["intensity"].astype(np.float64)
         if "mobility" in df:
-            width = entry.config.mobility_bin_width
-            df["mobility"] = np.round(df["mobility"].to_numpy(np.float64) / width) * width
+            values = df["mobility"].to_numpy(np.float64)
+            if entry.mobility.get("binned", True):
+                # Snap back to the exact bin centres the extractor rounded 1/K0 to.
+                width = entry.config.mobility_bin_width
+                values = np.round(values / width) * width
+            df["mobility"] = values
         if with_retention_time:
             frames, rts, _ = _frame_index(str(entry.path / FRAMES_FILE))
             lookup = np.full(int(frames.max()) + 1, np.nan)
             lookup[frames] = rts
             df["retention_time"] = lookup[df["frame"].to_numpy()]
         return df
+
+
+    def load_precursors(self, entry: CacheEntry) -> pd.DataFrame:
+        """DDA-PASEF precursors of this run (empty if it has none)."""
+        import pyarrow.parquet as pq
+
+        path = entry.path / PRECURSORS_FILE
+        if not path.is_file():
+            return pd.DataFrame()
+        return pq.read_table(path).to_pandas()
+
+    def load_msms(self, entry: CacheEntry, precursor_ids: Iterable[int]) -> dict[int, tuple]:
+        """``{precursor_id: (mz, intensity)}`` for the requested precursors, by pushdown."""
+        import pyarrow.parquet as pq
+
+        path = entry.path / MSMS_FILE
+        ids = sorted({int(i) for i in precursor_ids})
+        if not path.is_file() or not ids:
+            return {}
+        df = pq.read_table(path, filters=[("precursor_id", "in", ids)]).to_pandas()
+        return {int(pid): (g["mz"].to_numpy(np.float64), g["intensity"].to_numpy(np.float64))
+                for pid, g in df.groupby("precursor_id", sort=False)}
 
 
 def _merge_ranges(ranges: Iterable[tuple[float, float]]) -> list[tuple[float, float]]:

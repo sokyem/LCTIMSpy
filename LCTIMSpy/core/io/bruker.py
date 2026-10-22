@@ -92,7 +92,11 @@ def read_dataset_meta(d_path: str | Path) -> DatasetMeta:
 
 
 class FrameSource(Protocol):
-    """Reads the 3D spectrum of one frame. Implemented by the SDK and by test fakes."""
+    """Reads the 3D spectrum of one frame. Implemented by the SDK and by test fakes.
+
+    Optional capabilities, used when present: ``scan_to_mobility(frame_id,
+    scans)`` and ``read_pasef_msms(precursor_ids)`` (see ``BrukerFrameSource``).
+    """
 
     def read_frame(self, frame_id: int, num_scans: int) -> Spectrum | None: ...
 
@@ -109,6 +113,24 @@ class BrukerFrameSource:
         if mz is None or len(mz) == 0:
             return None
         return mz, intensity, mobility
+
+    def scan_to_mobility(self, frame_id: int, scans: np.ndarray) -> np.ndarray:
+        """TIMS scan numbers -> 1/K0 (V·s/cm²), with this dataset's calibration."""
+        from pyTDFSDK.tims import tims_scannum_to_oneoverk0
+
+        scans = np.asarray(scans, dtype=np.float64)
+        if scans.size == 0:
+            return scans
+        return np.asarray(tims_scannum_to_oneoverk0(self._tdf.api, self._tdf.handle,
+                                                    int(frame_id), scans), dtype=np.float64)
+
+    def read_pasef_msms(self, precursor_ids: list[int]) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+        """Bruker-centroided MS/MS spectrum per PASEF precursor (frames summed by the SDK)."""
+        from pyTDFSDK.tims import tims_read_pasef_msms_v2
+
+        result = tims_read_pasef_msms_v2(self._tdf.api, self._tdf.handle, precursor_ids)
+        return {int(k): (np.asarray(v[0], dtype=np.float64), np.asarray(v[1], dtype=np.float64))
+                for k, v in result.items()}
 
     def close(self) -> None:
         tdf = self._tdf
