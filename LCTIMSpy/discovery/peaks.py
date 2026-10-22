@@ -352,8 +352,16 @@ def detect_mobility_populations(x: np.ndarray, y: np.ndarray,
             best_skew = (p, chi)
     ps, chis = best_skew
 
-    bic = {"one gaussian": chi1 + 4 * math.log(n), "two gaussians": chi2 + 7 * math.log(n),
-           "one skewed": chis + 5 * math.log(n)}
+    # Quasi-likelihood correction: real intensity scatter is not Poisson (it is
+    # partly multiplicative), which inflates chi2 so that any extra parameter
+    # "wins" on BIC. The overdispersion c_hat is estimated from the most general
+    # model and divides every chi2 before the models are compared (QBIC).
+    general = chi2 if np.isfinite(chi2) else chi1
+    k_general = 7 if np.isfinite(chi2) else 4
+    c_hat = max(1.0, general / max(n - k_general, 1)) if np.isfinite(general) else 1.0
+    bic = {"one gaussian": chi1 / c_hat + 4 * math.log(n),
+           "two gaussians": chi2 / c_hat + 7 * math.log(n),
+           "one skewed": chis / c_hat + 5 * math.log(n)}
     single_bic = min(bic["one gaussian"], bic["one skewed"])
     flags: list[str] = []
     if cfg.precision_is_placeholder:
