@@ -41,6 +41,8 @@ test("untargeted discovery, candidate viewer and hand-off to localization", asyn
   await expect(table.locator("tbody tr").first()).toBeVisible({ timeout: 200_000 });
   await expect(page.locator(".tile", { hasText: "High-confidence putative" }).locator(".tile-value")).not.toHaveText("0");
   await expect(table.getByText("IM-separated").first()).toBeVisible();
+  await expect(page.locator(".tile", { hasText: "Strong data support" })).toBeVisible();
+  await expect(table.locator("th", { hasText: "Data support" })).toBeVisible();
   await shot(page, "d1-discovery-run");
 
   // Best candidate first: open it.
@@ -53,6 +55,11 @@ test("untargeted discovery, candidate viewer and hand-off to localization", asyn
   await expect(viewer.getByRole("heading", { name: "MS/MS mirror plot" })).toBeVisible();
   await expect(viewer.getByText("RT difference (min)")).toBeVisible();
   await expect(viewer.getByText("LC-MS signal, not molar abundance")).toBeVisible();
+  // Evidence from the data alone, without the identifications.
+  await expect(viewer.getByRole("heading", { name: "Data-only evidence" })).toBeVisible();
+  await expect(viewer.getByRole("cell", { name: "Isotope distribution" })).toBeVisible();
+  await expect(viewer.getByRole("cell", { name: /^agree \(cosine (0\.9[5-9]|1\.00)\d\)$/ })).toBeVisible();
+  await expect(viewer.locator(".barlayer .trace")).toHaveCount(2);
   if (SHOTS) {
     await page.setViewportSize({ width: 1440, height: 2800 });
     await page.waitForTimeout(600);

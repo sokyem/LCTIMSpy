@@ -51,10 +51,19 @@ class Species:
     # 0 = fragment intensities identical to any species of the same sequence;
     # > 0 perturbs them (isomer-specific fragmentation), deterministically.
     msms_variant: float = 0.0
+    # Relative isotope intensities; None = averagine. A different pattern at the
+    # same nominal mass models an isobaric species of another composition.
+    isotope_pattern: tuple[float, ...] | None = None
 
     @property
     def mono_mz(self) -> float:
         return self.neutral_mass / self.charge + PROTON
+
+    def pattern(self) -> np.ndarray:
+        if self.isotope_pattern is not None:
+            p = np.asarray(self.isotope_pattern, dtype=float)[: self.n_isotopes]
+            return p / p.max()
+        return averagine_pattern(self.neutral_mass, self.n_isotopes)
 
 
 @dataclass
@@ -139,7 +148,7 @@ def pasef_plan(s: Scenario):
                   if inten >= s.msms_min_intensity]
         for i in chosen:
             sp = s.species[i]
-            pattern = averagine_pattern(sp.neutral_mass, sp.n_isotopes)
+            pattern = sp.pattern()
             k_top = int(np.argmax(pattern))
             largest = sp.mono_mz + k_top * NEUTRON / sp.charge
             scan = (hi - sp.mobility) / s.scan_step
@@ -154,7 +163,7 @@ def pasef_plan(s: Scenario):
                 inten = other.abundance * _elution(other, rt)
                 if inten < s.min_signal:
                     continue
-                iso = averagine_pattern(other.neutral_mass, other.n_isotopes)
+                iso = other.pattern()
                 in_window = sum(rel for k, rel in enumerate(iso)
                                 if abs(other.mono_mz + k * NEUTRON / other.charge - largest)
                                 <= s.isolation_width / 2)
@@ -188,7 +197,7 @@ class SyntheticFrameSource:
             drift = np.exp(-0.5 * ((self._grid - sp.mobility) / sp.mobility_sigma) ** 2)
             scans = self._grid[drift * elution * sp.abundance >= s.min_signal]
             weights = np.exp(-0.5 * ((scans - sp.mobility) / sp.mobility_sigma) ** 2)
-            pattern = averagine_pattern(sp.neutral_mass, sp.n_isotopes)
+            pattern = sp.pattern()
             for k, rel in enumerate(pattern):
                 inten = sp.abundance * elution * rel * weights
                 keep = inten >= s.min_signal

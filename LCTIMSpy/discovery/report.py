@@ -13,6 +13,7 @@ CSV_COLUMNS = [
     "neutral_mass", "mono_mz", "delta_rt", "rt_separation", "rt_resolution",
     "mobility_rel_diff_pct", "delta_mobility", "msms_status", "msms_cosine",
     "relative_signal_fraction_a", "sequence_status",
+    "data_support", "isotope_cosine", "mono_mz_diff_ppm", "charge_states",
     "a_rt_apex", "a_rt_start", "a_rt_end", "a_mobility", "a_signal", "a_snr", "a_psm_count",
     "b_rt_apex", "b_rt_start", "b_rt_end", "b_mobility", "b_signal", "b_snr", "b_psm_count",
     "flags", "exclusion_reasons",
@@ -27,6 +28,9 @@ CAVEATS = [
     "different fragmentation does not exclude isomerization.",
     "Screening thresholds (RT, mobility, similarity) are method- and instrument-dependent and "
     "should be set from characterized standards and replicate data.",
+    "Agreeing isotope distributions and monoisotopic masses are consistent with a shared "
+    "elemental composition; they do not distinguish isomers from each other, and an "
+    "interference can distort either envelope.",
     "Synthetic test data validate the software only; they are not evidence about real isomers.",
 ]
 
@@ -39,6 +43,14 @@ def flatten(records: list[dict]) -> pd.DataFrame:
             s = r.get(key) or {}
             for f in ("rt_apex", "rt_start", "rt_end", "mobility", "signal", "snr", "psm_count"):
                 row[f"{side}_{f}"] = s.get(f)
+        row["data_support"] = (r.get("data_support") or {}).get("level")
+        ev = r.get("data_evidence") or {}
+        iso = ev.get("isotopes") or {}
+        row["isotope_cosine"] = iso.get("cosine")
+        row["mono_mz_diff_ppm"] = iso.get("mono_mz_diff_ppm")
+        ch = ev.get("charge_states") or {}
+        row["charge_states"] = " ".join(
+            f"{s['charge']}+{'(split)' if s['reproduced'] else ''}" for s in ch.get("states", [])) or None
         row["flags"] = " | ".join(r.get("flags") or [])
         row["exclusion_reasons"] = " | ".join(r.get("exclusion_reasons") or [])
         rows.append(row)
@@ -74,6 +86,8 @@ def to_html(meta: dict, records: list[dict]) -> str:
                 r["charge"], _fmt(r["neutral_mass"]), _fmt(r.get("delta_rt"), 2),
                 _fmt(r.get("mobility_rel_diff_pct"), 2), html.escape(r.get("msms_status") or "–"),
                 _fmt(r.get("msms_cosine"), 2),
+                html.escape((r.get("data_support") or {}).get("level") or "–"),
+                _fmt(((r.get("data_evidence") or {}).get("isotopes") or {}).get("cosine"), 3),
                 html.escape("; ".join((r.get("exclusion_reasons") or []) + (r.get("flags") or [])[:3])),
             )) + "</tr>")
     by_class = "".join(f"<li>{html.escape(k)}: {v}</li>" for k, v in counts.get("by_class", {}).items())
@@ -100,6 +114,8 @@ PSMs: {html.escape(str(psm.get("engine") or "none"))} ({psm.get("used", 0)} used
 <h2>Summary</h2>
 <p>{counts.get("candidates", 0)} candidates, {counts.get("excluded", 0)} excluded (kept with reasons), from {meta.get("n_charged_features", 0)} charged features.</p>
 <ul>{by_class}</ul><ul>{by_cat}</ul>
+<p>Data-only support (isotope distribution, monoisotopic m/z, other charge states, MS/MS; no identifications needed):
+{", ".join(f"{k} {v}" for k, v in counts.get("by_data_support", {}).items())}.</p>
 <h2>Settings</h2>
 <p class="muted">ΔRT ≥ {cand_cfg.get("rt_min_delta")} min with Rs ≥ {cand_cfg.get("rt_min_resolution")};
 mobility difference ≥ {cand_cfg.get("mobility_min_rel_pct")}% (reference: mean of the two population centres);
@@ -108,7 +124,7 @@ mass tolerance {cand_cfg.get("grouping", {}).get("mass_ppm")} ppm.</p>
 <h2>Notes</h2><ul>{notes or "<li>none</li>"}</ul>
 <h2>Candidates</h2>
 <table><thead><tr><th>#</th><th>Status</th><th>Class</th><th>Category</th><th>Sequence</th><th>z</th>
-<th>Neutral mass</th><th>ΔRT (min)</th><th>Δ mobility (%)</th><th>MS/MS</th><th>cos</th><th>Reasons / flags</th></tr></thead>
+<th>Neutral mass</th><th>ΔRT (min)</th><th>Δ mobility (%)</th><th>MS/MS</th><th>cos</th><th>Data support</th><th>Isotope cos</th><th>Reasons / flags</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table>
 <h2>Interpretation</h2><ul>{caveats}</ul>
 </body></html>"""

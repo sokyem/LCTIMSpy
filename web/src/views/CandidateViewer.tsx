@@ -10,7 +10,7 @@ import { SERIES_DARK, SERIES_LIGHT } from "../lib/palette";
 import { useDarkMode } from "../lib/theme";
 import { useFetch } from "../lib/useFetch";
 import { useStore } from "../store";
-import { prettyKey } from "./DiscoveryView";
+import { prettyKey, SUPPORT_BADGE } from "./DiscoveryView";
 
 const CRITERION_LABEL: Record<string, string> = {
   delta_rt: "RT difference (min)",
@@ -81,6 +81,7 @@ function Detail({ d, dark, runId }: { d: CandidateDetail; dark: boolean; runId: 
       <Summary c={c} />
       {d.note && <Banner kind="warn" title="Traces unavailable">{d.note}</Banner>}
       {d.detail && <Traces detail={d.detail} col={col} dark={dark} c={c} />}
+      {c.data_evidence && c.data_support && <DataEvidencePanel c={c} col={col} dark={dark} />}
       <div className="grid-2">
         <Criteria c={c} />
         <Evidence d={d} />
@@ -419,6 +420,98 @@ function Handoff({ c, runId }: { c: DiscoveryCandidate; runId: string }) {
           " Both species elute in the same RT window, so the two windows coincide; tell them apart by mobility."}
         {ready && modified && " The fragment calculator uses the unmodified sequence; add modified fragment m/z by hand."}
       </span>
+    </div>
+  );
+}
+
+function Verdict({ supports }: { supports: boolean | null }) {
+  if (supports === true) return <CheckCircle2 size={14} aria-label="supports" style={{ color: "var(--success)" }} />;
+  if (supports === false) return <XCircle size={14} aria-label="argues against" style={{ color: "var(--danger)" }} />;
+  return <span className="faint" aria-label="neutral">–</span>;
+}
+
+/** Evidence from the raw data alone: isotopes, monoisotopic m/z, other charge states, MS/MS. */
+function DataEvidencePanel({ c, col, dark }: { c: DiscoveryCandidate; col: Record<string, string>; dark: boolean }) {
+  const ev = c.data_evidence!;
+  const support = c.data_support!;
+  const iso = ev.isotopes;
+  const ch = ev.charge_states;
+
+  const plot = useMemo(() => {
+    const labels = iso.averagine_relative.map((_, k) => (k === 0 ? "M" : `M+${k}`));
+    const data: Data[] = [];
+    for (const [name, env] of [["A", iso.a], ["B", iso.b]] as const)
+      if (env.relative)
+        data.push({ x: labels, y: env.relative, type: "bar", name: `Species ${name}`, marker: { color: col[name] },
+                    hovertemplate: `Species ${name} %{x}: %{y:.3f}<extra></extra>` } as Data);
+    data.push({ x: labels, y: iso.averagine_relative, type: "scatter", mode: "markers", name: "Averagine",
+                marker: { symbol: "line-ew-open", size: 26, color: dark ? "#e8eaed" : "#1f2329", line: { width: 2.5, color: dark ? "#e8eaed" : "#1f2329" } },
+                hovertemplate: "averagine %{x}: %{y:.3f}<extra></extra>" } as Data);
+    const layout: Partial<Layout> = { barmode: "group", bargap: 0.35, xaxis: { title: { text: "Isotope" } },
+                                      yaxis: { title: { text: "Relative intensity" }, range: [0, 1.1] }, margin: { t: 28 } };
+    return { data, layout };
+  }, [iso, col, dark]);
+
+  const fmtSide = (s: (typeof ch.states)[number]["a"]) =>
+    s ? `${s.relative_area != null ? `${(s.relative_area * 100).toFixed(0)}% of ${ch.charge}+` : "seen"}${s.n_populations >= 2 ? ` · ${s.n_populations} populations` : ""}` : "not observed";
+
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      <div className="row" style={{ gap: 8 }}>
+        <h3 style={{ fontSize: 14 }}>Data-only evidence</h3>
+        <span className={`badge ${SUPPORT_BADGE[support.level]}`}>{support.level} support</span>
+        <span className="faint" style={{ fontSize: 12 }}>no identifications used</span>
+      </div>
+      <div className="grid-2">
+        <div className="stack" style={{ gap: 8 }}>
+          <table className="data">
+            <thead><tr><th>Line of evidence</th><th>Result</th><th aria-label="Supports"></th></tr></thead>
+            <tbody>
+              {support.lines.map((l) => (
+                <tr key={l.name}>
+                  <td>{l.name}</td>
+                  <td style={{ fontSize: 13 }}>{l.result}</td>
+                  <td><Verdict supports={l.supports} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {ch.states.length > 0 && (
+            <table className="data">
+              <thead><tr><th>Charge</th><th>Species A</th><th>Species B</th><th>Split reproduced</th></tr></thead>
+              <tbody>
+                {ch.states.map((s) => (
+                  <tr key={s.charge}>
+                    <td className="num">{s.charge}+ <span className="faint">({fmtMz(s.mono_mz)})</span></td>
+                    <td style={{ fontSize: 13 }}>{fmtSide(s.a)}</td>
+                    <td style={{ fontSize: 13 }}>{ch.shared_rt_window ? "same RT window" : fmtSide(s.b)}</td>
+                    <td><Verdict supports={s.reproduced ? true : null} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {ch.distribution && ch.distribution.main_charge_fraction_a != null && ch.distribution.main_charge_fraction_b != null && (
+            <p style={{ fontSize: 13 }}>
+              {ch.charge}+ carries {(ch.distribution.main_charge_fraction_a * 100).toFixed(0)}% of A's signal and{" "}
+              {(ch.distribution.main_charge_fraction_b * 100).toFixed(0)}% of B's.
+            </p>
+          )}
+        </div>
+        <div className="stack" style={{ gap: 4 }}>
+          <Plot className="plot-mob" dark={dark} data={plot.data} layout={plot.layout}
+                ariaLabel={`Isotope distributions of species A and B against averagine, cosine ${iso.cosine?.toFixed(3) ?? "not available"}`} />
+          <p className="faint" style={{ fontSize: 12 }}>
+            A vs B cosine {iso.cosine?.toFixed(3) ?? "–"}
+            {iso.mono_mz_diff_ppm != null && ` · monoisotopic m/z ${iso.mono_mz_diff_ppm >= 0 ? "+" : ""}${iso.mono_mz_diff_ppm.toFixed(1)} ppm`}
+            {" "}· vs averagine A {iso.averagine_cosine_a?.toFixed(2) ?? "–"}, B {iso.averagine_cosine_b?.toFixed(2) ?? "–"}
+          </p>
+        </div>
+      </div>
+      <p className="faint" style={{ fontSize: 12 }}>
+        Matching isotope distributions and masses are consistent with one elemental composition but cannot tell isomers apart;
+        a different distribution suggests an isobaric species or an interference. Charge-state shares can differ between conformers.
+      </p>
     </div>
   );
 }

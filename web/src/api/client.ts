@@ -201,6 +201,46 @@ export interface DiscoveryCandidate {
   exclusion_reasons: string[];
   msms_status?: string;
   msms_cosine?: number | null;
+  data_evidence?: DataEvidence | null;
+  data_support?: DataSupport | null;
+}
+export interface Envelope {
+  intensities: number[];
+  relative: number[] | null;
+  mono_mz_measured: number | null;
+  n_points: number;
+}
+export interface ChargeSide {
+  rt_apex: number;
+  area: number;
+  relative_area: number | null;
+  n_populations: number;
+  mobility: number[];
+}
+export interface DataEvidence {
+  isotopes: {
+    a: Envelope;
+    b: Envelope;
+    averagine_relative: number[];
+    cosine: number | null;
+    max_deviation: number | null;
+    averagine_cosine_a: number | null;
+    averagine_cosine_b: number | null;
+    mono_mz_diff_ppm: number | null;
+    verdict: string;
+    mass_verdict: string;
+  };
+  charge_states: {
+    charge: number;
+    states: { charge: number; mono_mz: number; a: ChargeSide | null; b: ChargeSide | null; reproduced: boolean }[];
+    verdict: string;
+    shared_rt_window: boolean;
+    distribution: { main_charge_fraction_a: number | null; main_charge_fraction_b: number | null } | null;
+  };
+}
+export interface DataSupport {
+  level: "strong" | "moderate" | "weak";
+  lines: { name: string; result: string; supports: boolean | null }[];
 }
 export interface DiscoveryCounts {
   total: number;
@@ -208,6 +248,7 @@ export interface DiscoveryCounts {
   excluded: number;
   by_class: Record<string, number>;
   by_category: Record<string, number>;
+  by_data_support?: Record<string, number>;
 }
 export interface DiscoveryRunSummary {
   id: string;

@@ -28,6 +28,7 @@ const CATEGORY_BADGE: Record<string, string> = {
   "Mass-matched candidate": "badge",
   "Unresolved candidate": "badge-warn",
 };
+export const SUPPORT_BADGE: Record<string, string> = { strong: "badge-ok", moderate: "badge-info", weak: "badge-warn" };
 const PSM_EXTENSIONS = [".csv", ".tsv", ".txt", ".mzid", ".mztab"];
 
 interface Overrides {
@@ -38,6 +39,7 @@ interface Overrides {
   mobility_precision_rel: number | null;
   similarity_threshold: number;
   min_snr: number;
+  isotope_min_cosine: number;
 }
 const DEFAULTS: Overrides = {
   mass_ppm: 5,
@@ -47,6 +49,7 @@ const DEFAULTS: Overrides = {
   mobility_precision_rel: null,
   similarity_threshold: 0.7,
   min_snr: 5,
+  isotope_min_cosine: 0.95,
 };
 
 export function prettyKey(key: string | null | undefined): string {
@@ -172,7 +175,10 @@ export function DiscoveryView() {
                     </>
                   )}
                 </div>
-                <small>PEAKS, MSFragger psm.tsv, MaxQuant evidence.txt, mzIdentML or mzTab. Without one, only mass-first discovery runs.</small>
+                <small>
+                  PEAKS, MSFragger psm.tsv, MaxQuant evidence.txt, mzIdentML or mzTab. Optional: without one, discovery runs on the
+                  data alone (split or multiple RT peaks, mobility populations, isotope distributions, charge states, MS/MS).
+                </small>
               </div>
               <button className="btn btn-primary" disabled={!selected || running.length > 0} onClick={() => void start()}>
                 {running.length ? <Loader2 size={14} className="spin" aria-hidden /> : <Play size={14} aria-hidden />}
@@ -256,6 +262,7 @@ function Thresholds({ value, onChange }: { value: Overrides; onChange: (o: Overr
           {value.mobility_precision_rel == null && <span className="badge badge-warn">placeholder 0.005</span>}
         </Setting>
         <Setting label="MS/MS similarity ≥"><NumberInput value={value.similarity_threshold} step={0.05} min={0} max={1} label="Similarity threshold" width={80} onCommit={set("similarity_threshold")} /></Setting>
+        <Setting label="Isotope agreement (cos) ≥"><NumberInput value={value.isotope_min_cosine} step={0.01} min={0} max={1} label="Isotope agreement" width={80} onCommit={set("isotope_min_cosine")} /></Setting>
         <Setting label="Feature S/N ≥"><NumberInput value={value.min_snr} step={1} min={1} label="Minimum S/N" width={80} onCommit={set("min_snr")} /></Setting>
       </div>
     </div>
@@ -274,6 +281,7 @@ function Setting({ label, children }: { label: string; children: React.ReactNode
 function RunResults({ run, opened, onOpen }: { run: DiscoveryRun; opened: number | null; onOpen: (id: number | null) => void }) {
   const [classes, setClasses] = useState<string[]>([]);
   const [category, setCategory] = useState<string>("");
+  const [support, setSupport] = useState<string>("");
   const [showExcluded, setShowExcluded] = useState(false);
   const [search, setSearch] = useState("");
   const counts = run.meta.counts;
@@ -285,9 +293,10 @@ function RunResults({ run, opened, onOpen }: { run: DiscoveryRun; opened: number
       .filter((c) => showExcluded || c.status !== "excluded")
       .filter((c) => !classes.length || classes.includes(CLASS_SHORT[c.classification]))
       .filter((c) => !category || c.category === category)
+      .filter((c) => !support || c.data_support?.level === support)
       .filter((c) => !q || (c.mod_key ?? "").toLowerCase().includes(q) || c.neutral_mass.toFixed(3).includes(q))
       .sort((a, b) => rank(a) - rank(b) || b.neutral_mass - a.neutral_mass);
-  }, [run, classes, category, showExcluded, search]);
+  }, [run, classes, category, support, showExcluded, search]);
 
   const high = counts.by_category["High-confidence putative candidate"] ?? 0;
   const toggleClass = (k: string) => setClasses((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]));
@@ -299,6 +308,11 @@ function RunResults({ run, opened, onOpen }: { run: DiscoveryRun; opened: number
       <div className="tiles">
         <Tile label="Candidates" value={counts.candidates} sub={`${counts.excluded} excluded (kept with reasons)`} />
         <Tile label="High-confidence putative" value={high} sub="MS/MS-validated, both species" />
+        <Tile
+          label="Strong data support"
+          value={counts.by_data_support?.strong ?? 0}
+          sub={`no IDs needed · ${counts.by_data_support?.moderate ?? 0} moderate, ${counts.by_data_support?.weak ?? 0} weak`}
+        />
         {Object.entries(counts.by_class).map(([k, v]) => (
           <Tile key={k} label={k} value={v} />
         ))}
@@ -324,6 +338,12 @@ function RunResults({ run, opened, onOpen }: { run: DiscoveryRun; opened: number
               {Object.keys(CATEGORY_BADGE).map((c) => (
                 <option key={c}>{c}</option>
               ))}
+            </select>
+            <select className="select input-sm" value={support} onChange={(e) => setSupport(e.target.value)} aria-label="Filter by data support">
+              <option value="">Any data support</option>
+              <option value="strong">Strong</option>
+              <option value="moderate">Moderate</option>
+              <option value="weak">Weak</option>
             </select>
             <label className="check" style={{ fontSize: 13 }}>
               <input type="checkbox" checked={showExcluded} onChange={(e) => setShowExcluded(e.target.checked)} /> Show excluded
@@ -352,6 +372,7 @@ function RunResults({ run, opened, onOpen }: { run: DiscoveryRun; opened: number
                   <th className="r">ΔRT (min)</th>
                   <th className="r">Δ mobility</th>
                   <th>MS/MS</th>
+                  <th title="Isotope distribution, monoisotopic m/z, other charge states and MS/MS, without identifications">Data support</th>
                   <th className="r">Flags</th>
                 </tr>
               </thead>
@@ -385,6 +406,15 @@ function RunResults({ run, opened, onOpen }: { run: DiscoveryRun; opened: number
                     <td style={{ fontSize: 12.5 }}>
                       {c.msms_status ?? "–"}
                       {c.msms_cosine != null && <span className="faint num"> · {c.msms_cosine.toFixed(2)}</span>}
+                    </td>
+                    <td>
+                      {c.data_support ? (
+                        <span className={`badge ${SUPPORT_BADGE[c.data_support.level]}`} title={c.data_support.lines.map((l) => `${l.name}: ${l.result}`).join("\n")}>
+                          {c.data_support.level}
+                        </span>
+                      ) : (
+                        "–"
+                      )}
                     </td>
                     <td className="r">
                       {(c.flags.length > 0 || c.exclusion_reasons.length > 0) && (

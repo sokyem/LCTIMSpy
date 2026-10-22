@@ -25,6 +25,7 @@ class DiscoveryOverrides(BaseModel):
     similarity_threshold: float | None = Field(None, ge=0, le=1)
     min_annotated_fraction: float | None = Field(None, ge=0, le=1)
     min_snr: float | None = Field(None, gt=0)
+    isotope_min_cosine: float | None = Field(None, ge=0, le=1)
 
 
 class DiscoveryRunIn(BaseModel):

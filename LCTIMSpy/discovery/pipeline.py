@@ -23,6 +23,7 @@ import pandas as pd
 
 from ..core.progress import CancelToken, ProgressEvent, ProgressReporter, null_reporter
 from .candidates import CLASSES, CandidateConfig, discover
+from .evidence import EvidenceConfig, add_data_evidence, summarize_support
 from .features import FeatureFinderConfig, find_features
 from .msms import MsmsConfig, validate_msms
 from .psms import read_psms
@@ -33,6 +34,7 @@ class DiscoveryConfig:
     features: FeatureFinderConfig = field(default_factory=FeatureFinderConfig)
     candidates: CandidateConfig = field(default_factory=CandidateConfig)
     msms: MsmsConfig = field(default_factory=MsmsConfig)
+    evidence: EvidenceConfig = field(default_factory=EvidenceConfig)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -40,9 +42,12 @@ class DiscoveryConfig:
     def with_overrides(self, overrides: dict | None) -> DiscoveryConfig:
         """Apply the user-facing settings (flat names) onto the nested configs."""
         o = {k: v for k, v in (overrides or {}).items() if v is not None}
-        c, m, f = self.candidates, self.msms, self.features
+        c, m, f, e = self.candidates, self.msms, self.features, self.evidence
         if "mass_ppm" in o:
             c = replace(c, grouping=replace(c.grouping, mass_ppm=float(o["mass_ppm"])))
+            e = replace(e, mass_agreement_ppm=float(o["mass_ppm"]))
+        if "isotope_min_cosine" in o:
+            e = replace(e, min_isotope_cosine=float(o["isotope_min_cosine"]))
         for key in ("rt_min_delta", "rt_min_resolution", "mobility_min_rel_pct"):
             if key in o:
                 c = replace(c, **{key: float(o[key])})
@@ -55,7 +60,7 @@ class DiscoveryConfig:
                 m = replace(m, **{key: float(o[key])})
         if "min_snr" in o:
             f = replace(f, min_snr=float(o["min_snr"]))
-        return replace(self, features=f, candidates=c, msms=m)
+        return replace(self, features=f, candidates=c, msms=m, evidence=e)
 
 
 def to_jsonable(obj):
@@ -136,10 +141,18 @@ def run_discovery(cache, entry, out_dir: Path, psm_path: str | None = None,
     timings["candidates_s"] = time.perf_counter() - t
     cancel.raise_if_cancelled()
 
+    t = time.perf_counter()
+    if len(candidates):
+        candidates = add_data_evidence(cache, entry, candidates, cfg.evidence, cfg.candidates.trace,
+                                       reporter=reporter, cancel=cancel)
+    timings["evidence_s"] = time.perf_counter() - t
+    cancel.raise_if_cancelled()
+
     reporter(ProgressEvent("msms", 0, 1, "Validating with MS/MS"))
     t = time.perf_counter()
     if len(candidates):
         candidates = validate_msms(cache, entry, candidates, features, cfg.msms)
+        candidates["data_support"] = [summarize_support(r) for r in candidates.to_dict(orient="records")]
     timings["msms_s"] = time.perf_counter() - t
     reporter(ProgressEvent("msms", 1, 1, "Saving"))
 
@@ -164,12 +177,16 @@ def run_discovery(cache, entry, out_dir: Path, psm_path: str | None = None,
 
 def summarize(records: list[dict]) -> dict:
     out = {"total": len(records), "candidates": 0, "excluded": 0,
-           "by_class": {v: 0 for v in CLASSES.values()}, "by_category": {}}
+           "by_class": {v: 0 for v in CLASSES.values()}, "by_category": {},
+           "by_data_support": {"strong": 0, "moderate": 0, "weak": 0}}
     for r in records:
         out["excluded" if r["status"] == "excluded" else "candidates"] += 1
         if r["status"] != "excluded":
             out["by_class"][r["classification"]] = out["by_class"].get(r["classification"], 0) + 1
             out["by_category"][r["category"]] = out["by_category"].get(r["category"], 0) + 1
+            level = (r.get("data_support") or {}).get("level")
+            if level:
+                out["by_data_support"][level] += 1
     return out
 
 
