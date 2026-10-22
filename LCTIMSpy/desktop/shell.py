@@ -237,6 +237,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--browser", action="store_true", help="use the default browser instead of a window")
     p.add_argument("--smoke", action="store_true", help="start, check the UI renders, and exit")
     p.add_argument("--debug", action="store_true", help="verbose logging and WebView2 dev tools")
+    p.add_argument("--self-test", action="store_true",
+                   help="run the workflow on synthetic data through worker processes, then exit")
     return p.parse_args(argv)
 
 
@@ -245,6 +247,12 @@ def run(argv: list[str]) -> int:
     root = data_dir()
     log_file = setup_logging(root / "logs", debug=args.debug)
     log.info("starting %s (smoke=%s, browser=%s)", TITLE, args.smoke, args.browser)
+    if args.self_test:
+        from .selftest import run as self_test
+
+        code = self_test()
+        logging.shutdown()
+        os._exit(code)
 
     try:
         srv = ServerThread(ServerSettings())

@@ -45,6 +45,7 @@ bruker = ["pyTDFSDK @ git+https://github.com/gtluu/pyTDFSDK.git"]
 server = ["fastapi", "uvicorn[standard]", "pydantic>=2"]
 desktop = ["fastapi", "uvicorn[standard]", "pydantic>=2", "pywebview>=5"]
 dev = ["ruff", "pytest", "pytest-cov", "httpx"]
+build = ["pyinstaller>=6"]
 
 [project.urls]
 Homepage = "https://github.com/sokyem/LCTIMSpy"

@@ -142,3 +142,13 @@ def test_desktop_window_smoke(tmp_path):
                        capture_output=True, text=True, env=env_for(tmp_path), timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "SMOKE OK: rendered 'Datasets', API 200" in r.stdout
+
+
+def test_self_test_passes_from_source(tmp_path, monkeypatch):
+    """The checks LCTIMSpy.exe --self-test runs, here against the source tree."""
+    monkeypatch.setenv("LCTIMSPY_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PYTHONPATH", str(REPO))
+    monkeypatch.setenv("LCTIMSPY_TESTING", "1")   # run() sets it; this makes pytest restore it
+    from LCTIMSpy.desktop.selftest import run
+
+    assert run() == 0
