@@ -36,10 +36,14 @@ dependencies = [
 [project.scripts]
 lctimspy = "LCTIMSpy.cli:main"
 
+# Windowed launcher: no console window on Windows.
+[project.gui-scripts]
+lctimspy-desktop = "LCTIMSpy.desktop.main:main"
+
 [project.optional-dependencies]
 bruker = ["pyTDFSDK @ git+https://github.com/gtluu/pyTDFSDK.git"]
 server = ["fastapi", "uvicorn[standard]", "pydantic>=2"]
-desktop = ["pywebview"]
+desktop = ["fastapi", "uvicorn[standard]", "pydantic>=2", "pywebview>=5"]
 dev = ["ruff", "pytest", "pytest-cov", "httpx"]
 
 [project.urls]

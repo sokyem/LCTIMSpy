@@ -4,6 +4,7 @@
     lctimspy extract A.d [B.d ...]  extract into the cache (Ctrl-C cancels cleanly)
     lctimspy analyze A.d B.d C.d --peptide SEQ --windows 18.3:19.0 21.5:22.2
     lctimspy serve [--open]          run the local web server for the GUI
+    lctimspy desktop                 open the GUI in a native window
     lctimspy cache list|clear|remove KEY|sweep
 """
 
@@ -326,6 +327,24 @@ def cmd_serve(args) -> int:
     return 0
 
 
+# ---- desktop ----------------------------------------------------------------
+
+def cmd_desktop(args) -> int:
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        print('error: the desktop app needs pywebview; install with: pip install -e ".[desktop]"',
+              file=sys.stderr)
+        return 1
+    import os
+
+    if args.cache_dir:
+        os.environ["LCTIMSPY_CACHE_DIR"] = args.cache_dir
+    from .desktop.main import main as desktop_main
+
+    return desktop_main(args.desktop_args)
+
+
 # ---- cache ------------------------------------------------------------------
 
 def cmd_cache(args) -> int:
@@ -405,6 +424,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-token", action="store_true",
                    help="disable the per-run access token (not recommended)")
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("desktop", help="open the GUI in a native window",
+                       description="Options: --browser, --smoke, --debug")
+    p.add_argument("desktop_args", nargs=argparse.REMAINDER, metavar="...")
+    p.set_defaults(func=cmd_desktop)
 
     p = sub.add_parser("cache", help="inspect or clean the cache")
     csub = p.add_subparsers(dest="cache_cmd", required=True)

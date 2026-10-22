@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -85,12 +86,15 @@ def extract_to_cache(
     reporter: ProgressReporter = null_reporter,
     cancel: CancelToken | None = None,
     frame_source: FrameSource | None = None,
+    on_temp_dir: Callable[[Path], None] | None = None,
 ) -> CacheEntry:
     """Extract ``d_path`` into the cache and return the entry.
 
     Returns the existing entry immediately if one is valid, unless ``force``.
     ``frame_source`` replaces the TDF-SDK reader; tests use it to run the whole
-    pipeline without the SDK.
+    pipeline without the SDK. ``on_temp_dir`` is told the private temp folder
+    as soon as it exists, so a supervising process can remove it if this one
+    is killed before it can clean up after itself.
     """
     config = config or ExtractionConfig()
     cache = cache or Cache()
@@ -121,6 +125,8 @@ def extract_to_cache(
             else stack.enter_context(open_frame_source(d))
         )
         tmp = stack.enter_context(cache.writer(key))
+        if on_temp_dir is not None:
+            on_temp_dir(tmp)
         mz_range = (
             (dataset.mz_acq_lower, dataset.mz_acq_upper)
             if dataset.mz_acq_lower is not None and dataset.mz_acq_upper is not None
@@ -188,12 +194,14 @@ def _extract(
 
     try:
         for batch_start in range(0, len(ids), FRAME_BATCH):
-            cancel.raise_if_cancelled()
             mz_parts, int_parts, mob_parts, frame_parts = [], [], [], []
             for frame_id, n_scans in zip(
                 ids[batch_start:batch_start + FRAME_BATCH],
                 num_scans[batch_start:batch_start + FRAME_BATCH],
             ):
+                # Per frame, not per batch: a batch of slow frames (network
+                # drive, large frames) must not outlast the server's grace period.
+                cancel.raise_if_cancelled()
                 try:
                     spectrum = source.read_frame(int(frame_id), int(n_scans))
                 except Exception as exc:  # one bad frame should not lose an hour of work

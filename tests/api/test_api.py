@@ -240,7 +240,12 @@ def test_native_crash_is_reported_with_output(tmp_path):
 
 
 def settings_cache_has_entries(cache_dir: Path) -> bool:
-    return cache_dir.exists() and any(p for p in cache_dir.iterdir() if ".tmp-" not in p.name)
+    """Anything at all in the cache, including a crashed worker's temp folder.
+
+    The worker died in native code and never cleaned up; the server removes the
+    temp folder the worker announced.
+    """
+    return cache_dir.exists() and any(cache_dir.iterdir())
 
 
 def test_missing_sdk_fails_with_remediation(tmp_path, monkeypatch):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,7 +10,11 @@ from pathlib import Path
 from ..core.io.paths import APP_NAME, cache_root
 
 
-def _data_dir() -> Path:
+def data_dir() -> Path:
+    """Per-user app data (dataset list, scratch copies, logs). ``LCTIMSPY_DATA_DIR`` overrides."""
+    override = os.environ.get("LCTIMSPY_DATA_DIR")
+    if override:
+        return Path(override)
     import platformdirs
 
     return Path(platformdirs.user_data_dir(APP_NAME, APP_NAME))
@@ -18,8 +23,8 @@ def _data_dir() -> Path:
 @dataclass
 class ServerSettings:
     cache_dir: Path = field(default_factory=cache_root)
-    state_dir: Path = field(default_factory=lambda: _data_dir() / "server")
-    scratch_dir: Path = field(default_factory=lambda: _data_dir() / "scratch")
+    state_dir: Path = field(default_factory=lambda: data_dir() / "server")
+    scratch_dir: Path = field(default_factory=lambda: data_dir() / "scratch")
     # Per-run secret; None disables the check (tests, or a deliberate --no-token).
     token: str | None = field(default_factory=lambda: secrets.token_urlsafe(24))
     # The filesystem browser is the only endpoint that speaks absolute paths.

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -55,6 +56,8 @@ class Job:
     result: dict | None = None
     error: dict | None = None
     log_tail: deque = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
+    # Partial-output folders the worker announced; removed if it dies uncleanly.
+    temp_dirs: list[str] = field(default_factory=list)
     cancel_requested: bool = False
     proc: subprocess.Popen | None = field(default=None, repr=False)
 
@@ -196,6 +199,8 @@ class JobManager:
                     job.progress = msg
                     self.bus.publish("progress", {"job_id": job.id, **msg})
                 elif kind == "log":
+                    if msg.get("temp_dir"):
+                        job.temp_dirs.append(msg["temp_dir"])
                     job.log_tail.append(msg.get("message", ""))
                     self.bus.publish("log", {"job_id": job.id, **msg})
                 elif kind in TERMINAL_KINDS:
@@ -225,6 +230,10 @@ class JobManager:
                            + (f"\nLast output:\n{tail}" if tail else ""),
                 "remediation": None,
             }
+        if not terminal or terminal[0] not in TERMINAL_KINDS:
+            # Killed or crashed: the worker never ran its own cleanup.
+            for d in job.temp_dirs:
+                shutil.rmtree(d, ignore_errors=True)
         job.finished = time.time()
         with self._lock:
             self._running -= 1

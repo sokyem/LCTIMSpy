@@ -35,6 +35,12 @@ class EventBus:
         self._subscribers: set[Subscription] = set()
 
     @property
+    def subscriber_count(self) -> int:
+        """Connected SSE clients; the browser fallback shuts down when this stays at 0."""
+        with self._lock:
+            return len(self._subscribers)
+
+    @property
     def last_id(self) -> int:
         with self._lock:
             return self._next_id - 1

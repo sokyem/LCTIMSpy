@@ -119,8 +119,14 @@ def run_extract(spec: dict, token) -> dict:
         reporter=ThrottledReporter(),
         cancel=token,
         frame_source=_frame_source(spec),
+        on_temp_dir=announce_temp_dir,
     )
     return {"key": entry.key, "rows": entry.rows, "bytes": entry.bytes, "stats": entry.stats}
+
+
+def announce_temp_dir(path: Path) -> None:
+    """Tell the server where partial output lives, so it can remove it if it must kill us."""
+    emit("log", message=f"writing to {path}", temp_dir=str(path))
 
 
 def run_copy(spec: dict, token) -> dict:
@@ -139,6 +145,7 @@ def run_copy(spec: dict, token) -> dict:
         return {"path": str(final), "bytes": total, "skipped": True}
 
     tmp = dest_root / f"{src.name}.tmp-{uuid.uuid4().hex[:8]}"
+    announce_temp_dir(tmp)
     timer = StageTimer("copy", total, ThrottledReporter())
     done = 0
     try:
