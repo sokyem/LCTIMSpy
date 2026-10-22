@@ -22,6 +22,7 @@ import os
 import sqlite3
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -77,14 +78,19 @@ def make_synthetic_d(root: Path, name: str) -> Path:
 
 
 class Api:
-    def __init__(self, base: str):
+    """Calls the self-test server with its per-run token, like any other client."""
+
+    def __init__(self, base: str, token: str):
         self.base = base
+        self.token = token
 
     def call(self, method: str, path: str, body=None):
+        headers = {"X-LCTIMS-Token": self.token}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         req = urllib.request.Request(
             f"{self.base}/api{path}", method=method,
-            data=None if body is None else json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"} if body is not None else {})
+            data=None if body is None else json.dumps(body).encode(), headers=headers)
         with urllib.request.urlopen(req, timeout=60) as r:
             raw = r.read()
             ctype = r.headers.get("content-type", "")
@@ -107,14 +113,22 @@ def run() -> int:
     # The worker accepts a frame-source override only in testing mode.
     os.environ["LCTIMSPY_TESTING"] = "1"
     root = Path(tempfile.mkdtemp(prefix="lctims-selftest-"))
+    # Keeps the default random token: even for a few seconds, the API must not
+    # be open to other local processes.
     settings = ServerSettings(cache_dir=root / "cache", state_dir=root / "state",
-                              scratch_dir=root / "scratch", token=None)
+                              scratch_dir=root / "scratch")
     srv = ServerThread(settings)
     try:
         print(f"LCTIMSpy self-test in {root}", flush=True)
         srv.start()
-        api = Api(srv.base_url)
-        ok("server started")
+        api = Api(srv.base_url, settings.token)
+        unauthenticated = urllib.request.Request(f"{srv.base_url}/api/datasets")
+        try:
+            urllib.request.urlopen(unauthenticated, timeout=10)
+            raise AssertionError("the API answered without the token")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401, exc.code
+        ok("server started (API refuses requests without the token)")
 
         ids = []
         for i in range(3):
