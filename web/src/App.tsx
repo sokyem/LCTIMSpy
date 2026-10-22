@@ -1,4 +1,4 @@
-import { BarChart3, Crosshair, Database, FlaskConical, Settings, Waves } from "lucide-react";
+import { BarChart3, Crosshair, Database, FlaskConical, Radar, Settings, Waves } from "lucide-react";
 
 import { useServerState } from "./api/events";
 import { JobBar } from "./components/JobBar";
@@ -6,6 +6,7 @@ import { Banner } from "./components/ui";
 import { useDarkMode } from "./lib/theme";
 import { enabledTargets, useReadySamples, useStore, type View } from "./store";
 import { DatasetsView } from "./views/DatasetsView";
+import { DiscoveryView } from "./views/DiscoveryView";
 import { ResultsView } from "./views/ResultsView";
 import { SettingsView } from "./views/SettingsView";
 import { TargetsView } from "./views/TargetsView";
@@ -34,6 +35,7 @@ export function App() {
     windows: windows.length >= 2,
     results: false,
     settings: false,
+    discovery: false,
   };
   const hint: Partial<Record<View, string>> = {
     datasets: ready ? `${ready} ready` : undefined,
@@ -64,6 +66,15 @@ export function App() {
             {hint[s.view] && <span className="nav-hint">{hint[s.view]}</span>}
           </button>
         ))}
+        <div className="nav-section" aria-hidden>Untargeted</div>
+        <button
+          className="nav-item"
+          aria-current={view === "discovery" ? "page" : undefined}
+          onClick={() => setView("discovery")}
+        >
+          <Radar size={16} aria-hidden style={{ marginLeft: 2, marginRight: 2 }} />
+          Isomer discovery
+        </button>
         <div className="nav-spacer" />
         <button
           className="nav-item"
@@ -80,6 +91,7 @@ export function App() {
         {view === "windows" && <WindowsView />}
         {view === "results" && <ResultsView />}
         {view === "settings" && <SettingsView />}
+        {view === "discovery" && <DiscoveryView />}
       </main>
       <JobBar />
       {toast && (

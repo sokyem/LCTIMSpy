@@ -5,6 +5,10 @@
 Used by the Playwright tests, and handy for trying the interface without real
 timsTOF data or the Bruker SDK. Each replicate holds an isomer pair for two
 fragment ions (m/z 500.25 and 700.40) eluting at 0.40 and 0.80 min.
+
+For the Discovery screen there is also a synthetic DDA-PASEF run with known
+isomer pairs (``PASEF_isomers.d``) and a PEAKS export of its PSMs
+(``PASEF_isomers.psms.csv``, next to it in the data folder).
 """
 
 import argparse
@@ -14,11 +18,15 @@ from pathlib import Path
 
 from LCTIMSpy.core.io.cache import Cache
 from LCTIMSpy.core.io.extract import extract_to_cache
+from LCTIMSpy.discovery.synthetic import Scenario, SyntheticFrameSource, write_synthetic_d
 from LCTIMSpy.server.app import create_app
 from LCTIMSpy.server.registry import DatasetRegistry
 from LCTIMSpy.server.runner import bind_loopback, make_server, url_for
 from LCTIMSpy.server.settings import ServerSettings
+from tests.api.test_discovery_api import SPECIES, write_peaks_csv
 from tests.conftest import FakeFrameSource, make_fake_d
+
+DISCOVERY_RUN = "PASEF_isomers.d"
 
 
 def build(root: Path) -> ServerSettings:
@@ -30,6 +38,12 @@ def build(root: Path) -> ServerSettings:
         d = make_fake_d(root / "data", f"RH59{56 + i}.d")
         extract_to_cache(d, cache=cache, frame_source=FakeFrameSource(seed=i))
         registry.add(str(d), group="isoAsp")
+    scenario = Scenario(SPECIES, n_frames=500, seconds_per_frame=1.0, msms_every=3,
+                        isolation_scans=30)
+    d = write_synthetic_d(root / "data", DISCOVERY_RUN, scenario)
+    extract_to_cache(d, cache=cache, frame_source=SyntheticFrameSource(scenario))
+    registry.add(str(d), group="discovery")
+    write_peaks_csv(root / "data" / "PASEF_isomers.psms.csv", SPECIES, run=DISCOVERY_RUN)
     # One more, deliberately not extracted, to show the "Extract" state.
     registry.add(str(make_fake_d(root / "data", "RH5961.d")))
     return settings

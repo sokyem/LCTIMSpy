@@ -97,7 +97,7 @@ class CapabilitiesOut(BaseModel):
 class FsEntry(BaseModel):
     name: str
     path: str
-    kind: Literal["dir", "d_folder", "file"]
+    kind: Literal["dir", "d_folder", "mzml", "file"]
     size: int | None = None
 
 

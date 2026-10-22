@@ -147,3 +147,116 @@ export function saveBlob(blob: Blob, name: string): void {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// ---- discovery (server returns free-form JSON for these) --------------------------------
+
+export interface DiscoverySpecies {
+  rt_peak: number;
+  population: number;
+  n_populations: number;
+  kind: string;
+  rt_apex: number;
+  rt_start: number;
+  rt_end: number;
+  rt_area: number | null;
+  signal: number | null;
+  height: number;
+  mobility: number | null;
+  mobility_fwhm: number | null;
+  snr: number | null;
+  psm_count: number;
+  mod_keys: string[];
+  feature_ids: number[];
+  flags: string[];
+}
+export interface Criterion {
+  value: number | null;
+  threshold: number;
+  met: boolean;
+}
+export interface DiscoveryCandidate {
+  candidate_id: number;
+  route: string;
+  group: string | number;
+  charge: number;
+  mono_mz: number;
+  neutral_mass: number;
+  mod_key: string | null;
+  mod_keys?: string[];
+  classification: string;
+  category: string;
+  sequence_status: string;
+  delta_rt: number | null;
+  rt_resolution: number | null;
+  rt_separation: string;
+  delta_mobility: number | null;
+  mobility_rel_diff_pct: number | null;
+  mobility_reference: string;
+  relative_signal_fraction_a: number | null;
+  species_a: DiscoverySpecies;
+  species_b: DiscoverySpecies | null;
+  criteria: Record<string, Criterion>;
+  flags: string[];
+  status: "candidate" | "excluded";
+  exclusion_reasons: string[];
+  msms_status?: string;
+  msms_cosine?: number | null;
+}
+export interface DiscoveryCounts {
+  total: number;
+  candidates: number;
+  excluded: number;
+  by_class: Record<string, number>;
+  by_category: Record<string, number>;
+}
+export interface DiscoveryRunSummary {
+  id: string;
+  created: number;
+  dataset: { name: string; source_path: string };
+  counts: DiscoveryCounts;
+  psms: { engine: string; used: number; total: number; note: string } | null;
+  n_features: number;
+  notes: string[];
+}
+export interface DiscoveryRun {
+  id: string;
+  meta: { counts: DiscoveryCounts; notes: string[]; config: Record<string, unknown>; mobility: { coordinate: string | null } } & Record<string, unknown>;
+  candidates: DiscoveryCandidate[];
+}
+export interface MsmsSide {
+  n_assigned: number;
+  n_unambiguous: number;
+  best_precursor: number | null;
+  best_ambiguous: boolean | null;
+  within_similarity_median: number | null;
+  spectra: { precursor_id: number; rt: number; mobility: number | null; ambiguous: boolean; reasons: string[]; n_peaks: number }[];
+}
+export interface CandidateDetail {
+  candidate: DiscoveryCandidate;
+  msms: {
+    a: MsmsSide | null;
+    b: MsmsSide | null;
+    similarity: { cosine: number | null; spectral_angle: number | null; n_matched: number; pearson: number | null } | null;
+    annotation: Record<string, { a: { fraction: number | null; n_ions: number } | null; b: { fraction: number | null; n_ions: number } | null }>;
+    differential_fragments: { mz: number; a: number; b: number; log_ratio: number | null }[];
+  };
+  detail: {
+    coordinate: string | null;
+    chromatogram: { rt: number[]; intensity: number[]; isotopes_summed: number; ppm: number };
+    species: (DiscoverySpecies & { name: string })[];
+    mobilograms: { species: string; x: number[]; y: number[]; centre: number | null; fwhm: number | null }[];
+    map: { rt: number[]; mobility: number[]; z: number[][] } | null;
+    ms1: { species: string; mz: number[]; intensity: number[]; averagine_mz: number[]; averagine_relative: number[] }[];
+    mirror: { a_mz: number[]; a_intensity: number[]; b_mz: number[]; b_intensity: number[]; matches: number[][] } | null;
+    labels: { measured: string[]; calculated: string[] };
+  } | null;
+  note: string | null;
+}
+
+/** GET a file the server offers as a download and save it. */
+export async function downloadGet(path: string): Promise<void> {
+  const res = await fetch(`/api${path}`, { credentials: "same-origin" });
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "download";
+  saveBlob(await res.blob(), name);
+}

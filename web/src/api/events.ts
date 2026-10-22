@@ -47,6 +47,13 @@ export function useServerState(): void {
     on("dataset", (d) => useStore.getState().upsertDataset(d as Dataset));
     on("dataset_removed", (d) => useStore.getState().removeDataset((d as { id: string }).id));
     on("resync", () => void refetch());
+    on("discovery_run", (d) => {
+      const { state, run_id } = d as { state: string; run_id: string | null };
+      const st = useStore.getState();
+      st.bumpDiscovery(state === "done" ? run_id : undefined);
+      if (state === "done") st.notify("ok", "Discovery run finished");
+      else if (state === "failed") st.notify("err", "Discovery run failed; see the job bar for details");
+    });
     source.onerror = () => {
       hadError = true;
     };

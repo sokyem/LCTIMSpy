@@ -73,6 +73,9 @@ def fs_list(path: str, state: AppState = Depends(get_state)):
                 is_d = child.suffix.lower() == ".d" and (child / "analysis.tdf").is_file()
                 entries.append(FsEntry(name=child.name, path=str(child),
                                        kind="d_folder" if is_d else "dir"))
+            elif child.name.lower().endswith((".mzml", ".mzml.gz")):
+                entries.append(FsEntry(name=child.name, path=str(child), kind="mzml",
+                                       size=child.stat().st_size))
             else:
                 entries.append(FsEntry(name=child.name, path=str(child), kind="file",
                                        size=child.stat().st_size))

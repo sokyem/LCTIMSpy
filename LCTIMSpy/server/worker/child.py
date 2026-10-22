@@ -180,7 +180,27 @@ def _same_tree(src: Path, dest: Path, files: list[Path]) -> bool:
     return True
 
 
-RUNNERS = {"extract": run_extract, "copy": run_copy}
+def run_discover(spec: dict, token) -> dict:
+    """Untargeted isomer discovery on a cached dataset (cache only: no SDK needed)."""
+    from ...core.errors import CacheError
+    from ...core.io.cache import Cache
+    from ...discovery.pipeline import DiscoveryConfig, run_discovery
+
+    cache = Cache(spec.get("cache_dir"))
+    entry = cache.get(spec["cache_key"])
+    if entry is None:
+        raise CacheError("the dataset's extraction is no longer in the cache; extract it again")
+    out_dir = Path(spec["out_dir"])
+    announce_temp_dir(out_dir)
+    meta = run_discovery(cache, entry, out_dir, psm_path=spec.get("psm_path"),
+                         psm_engine=spec.get("psm_engine"),
+                         cfg=DiscoveryConfig().with_overrides(spec.get("overrides")),
+                         reporter=ThrottledReporter(), cancel=token,
+                         dataset_name=spec.get("dataset_name"))
+    return {"run_id": out_dir.name, "counts": meta["counts"], "notes": meta["notes"]}
+
+
+RUNNERS = {"extract": run_extract, "copy": run_copy, "discover": run_discover}
 
 
 def main(argv: list[str] | None = None) -> int:

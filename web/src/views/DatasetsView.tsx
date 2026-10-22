@@ -52,7 +52,7 @@ export function DatasetsView() {
   const extract = (d: Dataset, force = false) => run("/jobs/extract", { dataset_id: d.id, force }, `Extract ${d.name}`);
   const copyLocal = (d: Dataset) => run("/jobs/copy-local", { dataset_id: d.id }, `Copy ${d.name}`);
   const remove = async (d: Dataset) => {
-    if (!confirm(`Remove ${d.name} from the list? The .d folder and its cache are kept.`)) return;
+    if (!confirm(`Remove ${d.name} from the list? The data and its cache are kept.`)) return;
     await api.del(`/datasets/${d.id}`);
     useStore.getState().removeDataset(d.id);
   };
@@ -67,7 +67,7 @@ export function DatasetsView() {
       <div className="view-head">
         <div>
           <h1>Datasets</h1>
-          <p className="muted">Add timsTOF .d folders, extract them once, and select the replicates to analyse.</p>
+          <p className="muted">Add timsTOF .d folders or mzML files, extract them once, and select the replicates to analyse.</p>
         </div>
         <div className="row">
           {pending.length > 0 && sdkOk && (
@@ -91,7 +91,7 @@ export function DatasetsView() {
       <div className="card">
         {list.length === 0 ? (
           <Empty icon={<Database size={32} aria-hidden />} title="No datasets yet">
-            <p>Add the .d folders of your LC-CID-TIMS runs to get started.</p>
+            <p>Add the .d folders (or mzML files) of your LC-TIMS runs to get started.</p>
             <button className="btn btn-primary" onClick={() => setAdding(true)} style={{ marginTop: 8 }}>
               <FolderPlus size={16} aria-hidden /> Add datasets
             </button>

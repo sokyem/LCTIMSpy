@@ -41,6 +41,11 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     bus = EventBus()
 
     def on_finished(job: Job) -> None:
+        if job.kind == "discover":
+            bus.publish("discovery_run", {"job_id": job.id, "state": job.state,
+                                          "dataset_id": job.dataset_id,
+                                          "run_id": (job.result or {}).get("run_id")})
+            return
         ds = registry.get(job.dataset_id) if job.dataset_id else None
         if ds is None:
             return
@@ -75,10 +80,11 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     async def value_error(request: Request, exc: ValueError):
         return JSONResponse(status_code=422, content={"error": "ValueError", "detail": str(exc)})
 
-    from .routers import analysis, datasets, system
+    from .routers import analysis, datasets, discovery, system
     from .routers import jobs as jobs_router
 
-    for router in (system.router, datasets.router, jobs_router.router, analysis.router):
+    for router in (system.router, datasets.router, jobs_router.router, analysis.router,
+                   discovery.router):
         app.include_router(router, prefix="/api")
 
     if (STATIC_DIR / "index.html").is_file():

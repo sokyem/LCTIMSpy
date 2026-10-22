@@ -1,12 +1,21 @@
-import { ChevronRight, Database, Folder, HardDrive, Loader2, Network } from "lucide-react";
+import { ChevronRight, Database, FileText, Folder, HardDrive, Loader2, Network } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { api, ApiError, type FsEntry, type FsListing } from "../api/client";
 import { Modal } from "./Modal";
 import { Banner } from "./ui";
 
-/** Pick one or more Bruker .d folders. Paths can also be pasted directly. */
-export function FsBrowser({ onClose, onAdd }: { onClose: () => void; onAdd: (paths: string[]) => Promise<void> }) {
+interface Props {
+  onClose: () => void;
+  onAdd: (paths: string[]) => Promise<void>;
+  /** "datasets": several .d folders / mzML files. "file": one file with ``extensions``. */
+  mode?: "datasets" | "file";
+  extensions?: string[];
+  title?: string;
+}
+
+/** Pick datasets (Bruker .d folders, mzML files) or one file. Paths can also be pasted. */
+export function FsBrowser({ onClose, onAdd, mode = "datasets", extensions = [], title }: Props) {
   const [roots, setRoots] = useState<FsEntry[]>([]);
   const [listing, setListing] = useState<FsListing | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
@@ -14,6 +23,7 @@ export function FsBrowser({ onClose, onAdd }: { onClose: () => void; onAdd: (pat
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const single = mode === "file";
 
   const open = useCallback(async (path: string) => {
     setLoading(true);
@@ -38,10 +48,11 @@ export function FsBrowser({ onClose, onAdd }: { onClose: () => void; onAdd: (pat
   }, [open]);
 
   const toggle = (path: string) =>
-    setPicked((p) => (p.includes(path) ? p.filter((x) => x !== path) : [...p, path]));
+    setPicked((p) => (single ? [path] : p.includes(path) ? p.filter((x) => x !== path) : [...p, path]));
 
+  const typedPaths = typed.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   const submit = async () => {
-    const paths = [...picked, ...typed.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)];
+    const paths = single ? (typedPaths[0] ? [typedPaths[0]] : picked) : [...picked, ...typedPaths];
     if (!paths.length) return;
     setBusy(true);
     try {
@@ -54,26 +65,38 @@ export function FsBrowser({ onClose, onAdd }: { onClose: () => void; onAdd: (pat
     }
   };
 
-  const dFolders = listing?.entries.filter((e) => e.kind === "d_folder") ?? [];
-  const dirs = listing?.entries.filter((e) => e.kind === "dir") ?? [];
-  const count = picked.length + typed.split(/\r?\n/).filter((s) => s.trim()).length;
+  const entries = listing?.entries ?? [];
+  const matches = (e: FsEntry) => extensions.some((x) => e.name.toLowerCase().endsWith(x));
+  const selectable = entries.filter((e) =>
+    single ? e.kind !== "dir" && e.kind !== "d_folder" && matches(e) : e.kind === "d_folder" || e.kind === "mzml",
+  );
+  const dirs = entries.filter((e) => e.kind === "dir" || (single && e.kind === "d_folder"));
+  const count = single ? (typedPaths.length || picked.length ? 1 : 0) : picked.length + typedPaths.length;
   const crumbs = listing ? crumbsFor(listing.path) : [];
 
   return (
     <Modal
-      title="Add datasets"
+      title={title ?? (single ? "Choose a file" : "Add datasets")}
       onClose={onClose}
       footer={
         <>
-          <span className="muted" style={{ marginRight: "auto", alignSelf: "center" }}>
-            {count ? `${count} selected` : "Select .d folders or paste paths"}
+          <span
+            className="muted"
+            style={{ marginRight: "auto", alignSelf: "center", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            title={single ? picked[0] ?? typedPaths[0] : undefined}
+          >
+            {single
+              ? picked[0] ?? (typedPaths[0] || `Select a ${extensions.join(" / ")} file`)
+              : count
+                ? `${count} selected`
+                : "Select .d folders or mzML files, or paste paths"}
           </span>
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
           <button className="btn btn-primary" disabled={!count || busy} onClick={submit}>
             {busy && <Loader2 size={14} className="spin" aria-hidden />}
-            Add {count || ""}
+            {single ? "Choose" : `Add ${count || ""}`}
           </button>
         </>
       }
@@ -103,13 +126,13 @@ export function FsBrowser({ onClose, onAdd }: { onClose: () => void; onAdd: (pat
         )}
         {error && <Banner kind="err" title="Could not open">{error}</Banner>}
       </div>
-      <div role="listbox" aria-multiselectable="true" aria-label="Folder contents" aria-busy={loading}>
+      <div role="listbox" aria-multiselectable={!single} aria-label="Folder contents" aria-busy={loading}>
         {listing?.parent && (
           <button className="fs-row" onClick={() => void open(listing.parent!)}>
             <Folder size={16} aria-hidden className="faint" /> ..
           </button>
         )}
-        {dFolders.map((e) => (
+        {selectable.map((e) => (
           <button
             key={e.path}
             role="option"
@@ -117,10 +140,14 @@ export function FsBrowser({ onClose, onAdd }: { onClose: () => void; onAdd: (pat
             className="fs-row"
             onClick={() => toggle(e.path)}
           >
-            <input type="checkbox" readOnly checked={picked.includes(e.path)} tabIndex={-1} aria-hidden />
-            <Database size={16} aria-hidden style={{ color: "var(--primary)" }} />
+            <input type={single ? "radio" : "checkbox"} readOnly checked={picked.includes(e.path)} tabIndex={-1} aria-hidden />
+            {e.kind === "d_folder" || e.kind === "mzml" ? (
+              <Database size={16} aria-hidden style={{ color: "var(--primary)" }} />
+            ) : (
+              <FileText size={16} aria-hidden style={{ color: "var(--primary)" }} />
+            )}
             <strong>{e.name}</strong>
-            <span className="faint">timsTOF dataset</span>
+            <span className="faint">{e.kind === "d_folder" ? "timsTOF dataset" : e.kind === "mzml" ? "mzML" : "file"}</span>
           </button>
         ))}
         {dirs.map((e) => (
@@ -128,20 +155,20 @@ export function FsBrowser({ onClose, onAdd }: { onClose: () => void; onAdd: (pat
             <Folder size={16} aria-hidden className="faint" /> {e.name}
           </button>
         ))}
-        {listing && !dFolders.length && !dirs.length && (
+        {listing && !selectable.length && !dirs.length && (
           <p className="muted" style={{ padding: 16 }}>
-            No folders here.
+            Nothing to pick here.
           </p>
         )}
       </div>
       <div className="card-body" style={{ borderTop: "1px solid var(--border)" }}>
         <label className="field">
-          <span>Or paste paths (one per line)</span>
+          <span>Or paste {single ? "a path" : "paths (one per line)"}</span>
           <textarea
             className="input mono"
-            rows={2}
+            rows={single ? 1 : 2}
             style={{ paddingTop: 6, resize: "vertical" }}
-            placeholder="X:\peaks\data\Samuel\20240707ISOASP\RH_0325_cid_tims_Slot1-19_1_5956.d"
+            placeholder={single ? "C:\\results\\db.psms.csv" : "X:\\peaks\\data\\Samuel\\20240707ISOASP\\RH_0325_cid_tims_Slot1-19_1_5956.d"}
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
           />

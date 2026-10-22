@@ -244,6 +244,7 @@ p { margin: 0; }
   color: var(--success);
 }
 .nav-spacer { flex: 1; }
+.nav-section { margin: 14px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); }
 .nav-hint {
   margin-left: auto;
   font-size: 12px;
@@ -636,7 +637,7 @@ table.data tr[aria-selected="true"] td { background: color-mix(in srgb, var(--pr
 }
 .modal {
   width: min(760px, 100%);
-  max-height: min(680px, 100%);
+  max-height: min(680px, calc(100vh - 2 * var(--s4)));
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -644,7 +645,7 @@ table.data tr[aria-selected="true"] td { background: color-mix(in srgb, var(--pr
   border-radius: var(--radius-lg);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
-.modal-body { overflow: auto; flex: 1; }
+.modal-body { overflow: auto; flex: 1; min-height: 0; }
 .modal-foot {
   display: flex;
   justify-content: flex-end;
@@ -670,7 +671,7 @@ table.data tr[aria-selected="true"] td { background: color-mix(in srgb, var(--pr
 }
 .fs-row:hover { background: var(--surface-hover); }
 .fs-row[aria-selected="true"] { background: var(--primary-soft); }
-.fs-row .faint { margin-left: auto; font-size: 12px; }
+.fs-row > span.faint { margin-left: auto; font-size: 12px; }
 .crumbs {
   display: flex;
   gap: 2px;

@@ -5,7 +5,7 @@ import type { Capabilities, Dataset, Job, Query, Stats } from "./api/client";
 import { freeSlot, MAX_WINDOWS } from "./lib/palette";
 import type { RtWindow } from "./lib/relayout";
 
-export type View = "datasets" | "targets" | "windows" | "results" | "settings";
+export type View = "datasets" | "targets" | "windows" | "results" | "settings" | "discovery";
 export type Theme = "system" | "light" | "dark";
 
 export interface Target {
@@ -65,6 +65,8 @@ interface State extends Session {
   jobs: Record<string, Job>;
   caps: Capabilities | null;
   toast: { kind: "ok" | "err"; text: string } | null;
+  discoveryVersion: number;
+  discoveryRun: string | null;
 
   setView: (v: View) => void;
   setTheme: (t: Theme) => void;
@@ -94,6 +96,11 @@ interface State extends Session {
   setStats: (s: Partial<Required<Stats>>) => void;
   setPeptide: (p: Partial<Session["peptide"]>) => void;
   loadSession: (s: Session) => void;
+  bumpDiscovery: (runId?: string | null) => void;
+  setDiscoveryRun: (runId: string | null) => void;
+  /** Hand a discovery candidate to the CID-TIMS localization workflow. */
+  handoffToLocalization: (targets: { mz: number; label: string | null }[], windows: RtWindow[],
+                          peptide: string, charges: number[]) => string | null;
 }
 
 const LIMIT_MSG = "At most 8 targets can be plotted at once (one colour each). Disable one first.";
@@ -134,6 +141,8 @@ export const useStore = create<State>()(
       jobs: {},
       caps: null,
       toast: null,
+      discoveryVersion: 0,
+      discoveryRun: null,
 
       setView: (view) => set({ view }),
       setTheme: (theme) => set({ theme }),
@@ -227,6 +236,16 @@ export const useStore = create<State>()(
       setQuery: (q) => set((s) => ({ query: { ...s.query, ...q } })),
       setStats: (st) => set((s) => ({ stats: { ...s.stats, ...st } })),
       setPeptide: (p) => set((s) => ({ peptide: { ...s.peptide, ...p } })),
+      bumpDiscovery: (runId) =>
+        set((s) => ({ discoveryVersion: s.discoveryVersion + 1, discoveryRun: runId ?? s.discoveryRun })),
+      setDiscoveryRun: (discoveryRun) => set({ discoveryRun }),
+      handoffToLocalization: (targets, windows, peptide, charges) => {
+        set({ targets: [], windows: windows.slice(0, MAX_WINDOWS), armed: null,
+              peptide: { sequence: peptide, charges } });
+        const warning = get().addTargets(targets);
+        set({ view: "targets" });
+        return warning;
+      },
       loadSession: (session) =>
         set({
           ...emptySession(),
@@ -251,6 +270,7 @@ export const useStore = create<State>()(
         peptide: s.peptide,
         view: s.view,
         theme: s.theme,
+        discoveryRun: s.discoveryRun,
       }),
     },
   ),

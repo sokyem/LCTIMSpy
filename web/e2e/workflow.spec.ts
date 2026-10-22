@@ -19,7 +19,7 @@ test("full isomer workflow in the browser", async ({ page }) => {
 
   // ---- 1. datasets
   await expect(page.getByRole("heading", { name: "Datasets" })).toBeVisible();
-  await expect(page.getByText("Extracted", { exact: true })).toHaveCount(3);
+  await expect(page.getByText("Extracted", { exact: true })).toHaveCount(4); // 3 replicates + the PASEF discovery run
   await expect(page.getByText("Not extracted")).toHaveCount(1);
   for (const name of ["RH5956", "RH5957", "RH5958"]) await page.getByLabel(`Analyse ${name}`).check();
   await expect(page.getByText("3 selected · 3 ready to analyse")).toBeVisible();

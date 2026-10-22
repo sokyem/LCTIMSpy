@@ -18,7 +18,8 @@ from pathlib import Path
 from ..core.config import ExtractionConfig
 from ..core.io.bruker import read_dataset_meta
 from ..core.io.cache import Cache, CacheEntry
-from ..core.io.paths import is_network_path, validate_d_folder
+from ..core.io.mzml import is_mzml
+from ..core.io.paths import is_network_path, validate_source
 from ..core.results import DatasetMeta
 
 
@@ -82,8 +83,14 @@ class DatasetRegistry:
     # ---- CRUD ---------------------------------------------------------------
 
     def add(self, path: str, name: str | None = None, group: str | None = None) -> Dataset:
-        d = validate_d_folder(path)
-        meta = read_dataset_meta(d)
+        d = validate_source(path)
+        if is_mzml(d):
+            # Counts and RT range need a full pass over the file; they are known
+            # once it has been extracted.
+            meta = DatasetMeta(source_path=str(d), name=d.name.split(".")[0], n_frames=0,
+                               n_ms1_frames=0, rt_min=0.0, rt_max=0.0)
+        else:
+            meta = read_dataset_meta(d)
         ds_id = dataset_id_for(d)
         with self._lock:
             existing = self._datasets.get(ds_id)
@@ -129,7 +136,7 @@ class DatasetRegistry:
         """The valid cache entry for this dataset, if it has been extracted."""
         config = config or ExtractionConfig()
         try:
-            return self.cache.lookup(validate_d_folder(ds.source), config)
+            return self.cache.lookup(validate_source(ds.source), config)
         except Exception:
             return None
 
